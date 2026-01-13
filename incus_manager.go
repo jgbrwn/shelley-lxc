@@ -48,6 +48,7 @@ const (
 	stateEditAppPort
 	stateEditAuthUser
 	stateEditAuthPass
+	stateUpdateShelley  // Show shelley update output
 	stateLogs
 	stateUntracked
 	stateImportContainer
@@ -87,19 +88,22 @@ type (
 	errorMsg           string
 	successMsg         string
 	tickMsg            time.Time
+	shelleyUpdateMsg   struct{ output string; success bool }
 )
 
 // TUI Model
 type model struct {
-	state       viewState
-	db          *sql.DB
-	containers  []containerEntry
-	cursor      int
-	textInput   textinput.Model
-	status      string
-	logContent  string
-	currentSvc  string
-	missing     []string
+	state         viewState
+	db            *sql.DB
+	containers    []containerEntry
+	cursor        int
+	textInput     textinput.Model
+	status        string
+	logContent    string
+	currentSvc    string
+	missing       []string
+	updateOutput  string  // Output from shelley update command
+	updateSuccess bool    // Whether shelley update succeeded
 
 	// Create flow state
 	newDomain      string
@@ -1205,6 +1209,29 @@ func streamLogsCmd(service string) tea.Cmd {
 	}
 }
 
+// updateShelleyCmd runs the shelley update command on a container
+func updateShelleyCmd(containerName string) tea.Cmd {
+	return func() tea.Msg {
+		// The update command to run on the container
+		updateScript := `curl -Lo /usr/local/bin/shelley "https://github.com/boldsoftware/shelley/releases/latest/download/shelley_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && chmod +x /usr/local/bin/shelley && sudo systemctl restart shelley`
+
+		// Run as exedev user
+		cmd := exec.Command("incus", "exec", containerName, "--user", "1000", "--", "bash", "-c", updateScript)
+		output, err := cmd.CombinedOutput()
+
+		result := string(output)
+		success := err == nil
+
+		if success {
+			result += "\n\n✅ Shelley updated successfully!"
+		} else {
+			result += fmt.Sprintf("\n\n❌ Update failed: %v", err)
+		}
+
+		return shelleyUpdateMsg{output: result, success: success}
+	}
+}
+
 // TUI Update method
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -1239,6 +1266,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case logMsg:
 		m.logContent = string(msg)
+		return m, nil
+
+	case shelleyUpdateMsg:
+		m.updateOutput = msg.output
+		m.updateSuccess = msg.success
+		if msg.success {
+			m.status = "Shelley updated successfully"
+		} else {
+			m.status = "Shelley update failed"
+		}
 		return m, nil
 
 	case tickMsg:
@@ -1299,6 +1336,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Any key returns to list
 		if key == "q" || key == "esc" {
 			m.state = stateList
+			return m, m.refreshContainers()
+		}
+	case stateUpdateShelley:
+		// Esc returns to container detail
+		if key == "q" || key == "esc" {
+			m.state = stateContainerDetail
 			return m, m.refreshContainers()
 		}
 	}
@@ -1405,6 +1448,17 @@ func (m model) handleDetailKeys(key string) (tea.Model, tea.Cmd) {
 			m.textInput.SetValue("admin")
 		}
 		m.textInput.Focus()
+	case "u":
+		// Update shelley binary on container
+		if c.Status != "running" {
+			m.status = "Container must be running to update Shelley"
+			return m, nil
+		}
+		m.status = "Updating Shelley on " + c.Name + "..."
+		m.state = stateUpdateShelley
+		m.updateOutput = "Updating Shelley binary...\n"
+		m.updateSuccess = false
+		return m, updateShelleyCmd(c.Name)
 	case "q", "esc":
 		m.state = stateList
 		m.editingContainer = nil
@@ -1695,6 +1749,24 @@ func (m model) View() string {
 		}
 		return fmt.Sprintf("🔐 EDIT SHELLEY AUTH: %s\n\nNew password (min 8 chars):\n\n%s\n\n[Enter] Save  [Esc] Cancel", containerName, m.textInput.View())
 
+	case stateUpdateShelley:
+		containerName := ""
+		if m.editingContainer != nil {
+			containerName = m.editingContainer.Name
+		}
+		statusIcon := "🔄"
+		if m.updateSuccess {
+			statusIcon = "✅"
+		} else if strings.Contains(m.updateOutput, "failed") {
+			statusIcon = "❌"
+		}
+		s := fmt.Sprintf("%s UPDATE SHELLEY: %s\n", statusIcon, containerName)
+		s += "═══════════════════════════════════════════════════════════════════════════════\n\n"
+		s += m.updateOutput
+		s += "\n\n───────────────────────────────────────────────────────────────────────────────\n"
+		s += "[Esc] Back to container details\n"
+		return s
+
 	case stateUntracked:
 		return m.viewUntracked()
 
@@ -1812,7 +1884,7 @@ func (m model) viewContainerDetail() string {
 	s += fmt.Sprintf("  🔑 SSH:         ssh -l %s <host> (via sshpiper on port 22)\n", c.Name)
 	s += "\n"
 	s += "───────────────────────────────────────────────────────────────────────────────\n"
-	s += "[s] Start/Stop  [r] Restart  [p] Change Port  [a] Change Auth  [Esc] Back\n"
+	s += "[s] Start/Stop  [r] Restart  [p] Change Port  [a] Change Auth  [u] Update Shelley  [Esc] Back\n"
 
 	if m.status != "" {
 		s += "\n📋 " + m.status
