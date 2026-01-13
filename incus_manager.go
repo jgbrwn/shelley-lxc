@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -795,8 +796,40 @@ func getHostPublicIP() string {
 			return ip
 		}
 	}
-	
+
 	return ""
+}
+
+// checkDNSResolvesToHost checks if a domain resolves to the host's public IP
+// Returns true if DNS is already correctly configured
+func checkDNSResolvesToHost(domain string) bool {
+	hostIP := getHostPublicIP()
+	if hostIP == "" {
+		return false
+	}
+
+	// Lookup the domain
+	ips, err := net.LookupIP(domain)
+	if err != nil {
+		return false
+	}
+
+	// Check if any resolved IP matches the host IP
+	for _, ip := range ips {
+		if ip.String() == hostIP {
+			return true
+		}
+	}
+
+	return false
+}
+
+// checkAllDNSForDomain checks both the main domain and shelley subdomain
+// Returns true only if BOTH resolve correctly to the host IP
+func checkAllDNSForDomain(domain string) bool {
+	mainOK := checkDNSResolvesToHost(domain)
+	shelleyOK := checkDNSResolvesToHost("shelley." + domain)
+	return mainOK && shelleyOK
 }
 
 // importContainer adds an existing Incus container to our management DB
@@ -1485,8 +1518,19 @@ func (m model) handleInputKeys(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.newDomain = val
-		m.state = stateCreateDNSProvider
-		m.textInput.Reset()
+		
+		// Check if DNS already resolves correctly - skip DNS provider selection if so
+		if checkAllDNSForDomain(val) {
+			m.status = "✓ DNS already configured correctly"
+			m.newDNSProvider = dnsNone
+			m.newDNSToken = ""
+			m.state = stateCreateAppPort
+			m.textInput.Placeholder = "8000"
+			m.textInput.SetValue("8000")
+		} else {
+			m.state = stateCreateDNSProvider
+			m.textInput.Reset()
+		}
 
 	case stateCreateDNSToken:
 		m.newDNSToken = val
@@ -1595,6 +1639,14 @@ func (m model) handleInputKeys(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.newDomain = val
+		
+		// Check DNS status and show info
+		if checkAllDNSForDomain(val) {
+			m.status = "✓ DNS already configured correctly"
+		} else {
+			m.status = "⚠ DNS not configured - set up DNS records manually after import"
+		}
+		
 		m.state = stateImportAuthUser
 		m.textInput.Placeholder = "admin"
 		m.textInput.SetValue("admin")
@@ -1708,7 +1760,18 @@ func (m model) View() string {
 		return "📦 CREATE NEW CONTAINER\n\nEnter domain (e.g., app.example.com):\n\n" + m.textInput.View() + "\n\n[Enter] Continue  [Esc] Cancel"
 
 	case stateCreateDNSProvider:
-		return fmt.Sprintf("📦 CREATE: %s\n\nAuto-create DNS record?\n\n[1] No - I'll configure DNS manually\n[2] Cloudflare\n[3] deSEC\n\n[Esc] Cancel", m.newDomain)
+		// Show current DNS status
+		dnsStatus := "⚠ DNS not configured (records needed)"
+		mainOK := checkDNSResolvesToHost(m.newDomain)
+		shelleyOK := checkDNSResolvesToHost("shelley." + m.newDomain)
+		if mainOK && shelleyOK {
+			dnsStatus = "✅ DNS already configured correctly"
+		} else if mainOK {
+			dnsStatus = "⚠ Main domain OK, shelley." + m.newDomain + " not configured"
+		} else if shelleyOK {
+			dnsStatus = "⚠ shelley subdomain OK, main domain not configured"
+		}
+		return fmt.Sprintf("📦 CREATE: %s\n\n%s\n\nAuto-create DNS record?\n\n[1] No - I'll configure DNS manually\n[2] Cloudflare\n[3] deSEC\n\n[Esc] Cancel", m.newDomain, dnsStatus)
 
 	case stateCreateCFProxy:
 		return fmt.Sprintf("📦 CREATE: %s\n\nEnable Cloudflare proxy (orange cloud)?\n\n[1] No  - DNS only (recommended for SSH/non-HTTP)\n[2] Yes - Proxy through Cloudflare (HTTP/HTTPS only)\n\n[Esc] Cancel", m.newDomain)
