@@ -79,17 +79,14 @@ type llmModel struct {
 }
 
 var availableModels = []llmModel{
-	{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4", Provider: "Anthropic", EnvVarName: "ANTHROPIC_API_KEY"},
-	{ID: "claude-opus-4-20250514", Name: "Claude Opus 4", Provider: "Anthropic", EnvVarName: "ANTHROPIC_API_KEY"},
-	{ID: "gpt-4.1", Name: "GPT-4.1", Provider: "OpenAI", EnvVarName: "OPENAI_API_KEY"},
-	{ID: "gpt-4.1-mini", Name: "GPT-4.1 Mini", Provider: "OpenAI", EnvVarName: "OPENAI_API_KEY"},
-	{ID: "gpt-4.1-nano", Name: "GPT-4.1 Nano", Provider: "OpenAI", EnvVarName: "OPENAI_API_KEY"},
-	{ID: "o3", Name: "O3", Provider: "OpenAI", EnvVarName: "OPENAI_API_KEY"},
-	{ID: "o4-mini", Name: "O4 Mini", Provider: "OpenAI", EnvVarName: "OPENAI_API_KEY"},
-	{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro", Provider: "Google", EnvVarName: "GEMINI_API_KEY"},
-	{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash", Provider: "Google", EnvVarName: "GEMINI_API_KEY"},
-	{ID: "deepseek-chat", Name: "DeepSeek Chat", Provider: "DeepSeek", EnvVarName: "DEEPSEEK_API_KEY"},
-	{ID: "grok-3-beta", Name: "Grok 3 Beta", Provider: "xAI", EnvVarName: "XAI_API_KEY"},
+	{ID: "claude-opus-4.5", Name: "Claude Opus 4.5", Provider: "Anthropic", EnvVarName: "ANTHROPIC_API_KEY"},
+	{ID: "claude-sonnet-4.5", Name: "Claude Sonnet 4.5", Provider: "Anthropic", EnvVarName: "ANTHROPIC_API_KEY"},
+	{ID: "claude-haiku-4.5", Name: "Claude Haiku 4.5", Provider: "Anthropic", EnvVarName: "ANTHROPIC_API_KEY"},
+	{ID: "gpt-5", Name: "GPT-5", Provider: "OpenAI", EnvVarName: "OPENAI_API_KEY"},
+	{ID: "gpt-5-nano", Name: "GPT-5 Nano", Provider: "OpenAI", EnvVarName: "OPENAI_API_KEY"},
+	{ID: "gpt-5.1-codex", Name: "GPT-5.1 Codex", Provider: "OpenAI", EnvVarName: "OPENAI_API_KEY"},
+	{ID: "qwen3-coder-fireworks", Name: "Qwen3 Coder", Provider: "Fireworks", EnvVarName: "FIREWORKS_API_KEY"},
+	{ID: "glm-4p6-fireworks", Name: "GLM-4P6", Provider: "Fireworks", EnvVarName: "FIREWORKS_API_KEY"},
 }
 
 // Container entry from database
