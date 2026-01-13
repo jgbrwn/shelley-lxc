@@ -24,7 +24,7 @@ This project provides the infrastructure to self-host your own [exe.dev](https:/
 | Component | Purpose |
 |-----------|--------|
 | **Incus (LXC)** | Container runtime - lightweight, persistent Linux containers |
-| **Caddy** | Reverse proxy with automatic HTTPS (Let's Encrypt) |
+| **Caddy** | Reverse proxy with automatic HTTPS (Let's Encrypt with ZeroSSL fallback) |
 | **SSHPiper** | SSH routing - access any container via `ssh container-name@host` |
 | **exeuntu** | OCI base image with development tools pre-installed |
 | **Shelley** | AI coding agent running inside each container |
