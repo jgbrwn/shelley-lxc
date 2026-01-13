@@ -59,6 +59,10 @@ const (
 	stateImportAuthPass
 	stateImportModelSelect  // Select default LLM model for import
 	stateImportAPIKey       // Enter API key for import
+	stateSnapshots          // View/manage snapshots
+	stateSnapshotCreate     // Create new snapshot (name input)
+	stateSnapshotRestore    // Confirm restore from snapshot
+	stateSnapshotDelete     // Confirm delete snapshot
 )
 
 // DNS Provider types
@@ -100,6 +104,13 @@ type containerEntry struct {
 	CPU       string
 	Memory    string
 	CreatedAt time.Time
+}
+
+// Snapshot entry from Incus
+type snapshotEntry struct {
+	Name      string
+	CreatedAt time.Time
+	Stateful  bool
 }
 
 // Messages for async operations
@@ -146,6 +157,11 @@ type model struct {
 
 	// Edit state
 	editingContainer *containerEntry
+
+	// Snapshot management
+	snapshots       []snapshotEntry
+	snapshotCursor  int
+	newSnapshotName string
 }
 
 func initialModel() model {
@@ -922,6 +938,64 @@ func deleteContainer(db *sql.DB, name string) error {
 	return err
 }
 
+// Snapshot management functions
+func listSnapshots(containerName string) []snapshotEntry {
+	out, err := exec.Command("incus", "snapshot", "list", containerName, "--format", "json").Output()
+	if err != nil {
+		return nil
+	}
+
+	var snapshots []struct {
+		Name      string `json:"name"`
+		CreatedAt string `json:"created_at"`
+		Stateful  bool   `json:"stateful"`
+	}
+	if err := json.Unmarshal(out, &snapshots); err != nil {
+		return nil
+	}
+
+	result := make([]snapshotEntry, 0, len(snapshots))
+	for _, s := range snapshots {
+		created, _ := time.Parse(time.RFC3339, s.CreatedAt)
+		result = append(result, snapshotEntry{
+			Name:      s.Name,
+			CreatedAt: created,
+			Stateful:  s.Stateful,
+		})
+	}
+	return result
+}
+
+func createSnapshot(containerName, snapshotName string) error {
+	out, err := exec.Command("incus", "snapshot", "create", containerName, snapshotName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", string(out))
+	}
+	return nil
+}
+
+func restoreSnapshot(containerName, snapshotName string) error {
+	// Stop container first for clean restore
+	exec.Command("incus", "stop", containerName, "--force").Run()
+	
+	out, err := exec.Command("incus", "snapshot", "restore", containerName, snapshotName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", string(out))
+	}
+	
+	// Start container back up
+	exec.Command("incus", "start", containerName).Run()
+	return nil
+}
+
+func deleteSnapshot(containerName, snapshotName string) error {
+	out, err := exec.Command("incus", "snapshot", "delete", containerName, snapshotName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", string(out))
+	}
+	return nil
+}
+
 func startContainer(db *sql.DB, name string) error {
 	out, err := exec.Command("incus", "start", name).CombinedOutput()
 	if err != nil {
@@ -1468,6 +1542,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleImportModelSelectKeys(key)
 	case stateUntracked:
 		return m.handleUntrackedKeys(key)
+	case stateSnapshots:
+		return m.handleSnapshotKeys(key)
+	case stateSnapshotCreate:
+		return m.handleSnapshotCreateKeys(key)
+	case stateSnapshotRestore, stateSnapshotDelete:
+		return m.handleSnapshotConfirmKeys(key)
 	case stateLogs:
 		// Any key returns to list
 		if key == "q" || key == "esc" {
@@ -1595,6 +1675,12 @@ func (m model) handleDetailKeys(key string) (tea.Model, tea.Cmd) {
 		m.updateOutput = "Updating Shelley binary...\n"
 		m.updateSuccess = false
 		return m, updateShelleyCmd(c.Name)
+	case "S":
+		// Snapshot management
+		m.snapshots = listSnapshots(c.Name)
+		m.snapshotCursor = 0
+		m.state = stateSnapshots
+		return m, nil
 	case "q", "esc":
 		m.state = stateList
 		m.editingContainer = nil
@@ -1912,6 +1998,102 @@ func (m model) handleUntrackedKeys(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) handleSnapshotKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc", "q":
+		m.state = stateContainerDetail
+		return m, nil
+	case "up", "k":
+		if m.snapshotCursor > 0 {
+			m.snapshotCursor--
+		}
+	case "down", "j":
+		if m.snapshotCursor < len(m.snapshots)-1 {
+			m.snapshotCursor++
+		}
+	case "n":
+		// Create new snapshot
+		m.state = stateSnapshotCreate
+		m.textInput.Placeholder = "snapshot-name"
+		m.textInput.SetValue(fmt.Sprintf("snap-%s", time.Now().Format("20060102-150405")))
+		m.textInput.Focus()
+	case "enter", "r":
+		// Restore selected snapshot
+		if len(m.snapshots) > 0 && m.snapshotCursor < len(m.snapshots) {
+			m.state = stateSnapshotRestore
+		}
+	case "d":
+		// Delete selected snapshot
+		if len(m.snapshots) > 0 && m.snapshotCursor < len(m.snapshots) {
+			m.state = stateSnapshotDelete
+		}
+	}
+	return m, nil
+}
+
+func (m model) handleSnapshotCreateKeys(key string) (tea.Model, tea.Cmd) {
+	if key == "esc" {
+		m.state = stateSnapshots
+		m.textInput.Reset()
+		return m, nil
+	}
+	if key != "enter" {
+		return m, nil
+	}
+
+	name := strings.TrimSpace(m.textInput.Value())
+	if name == "" {
+		m.status = "Snapshot name cannot be empty"
+		return m, nil
+	}
+
+	if m.editingContainer != nil {
+		if err := createSnapshot(m.editingContainer.Name, name); err != nil {
+			m.status = "Snapshot failed: " + err.Error()
+		} else {
+			m.status = "Created snapshot: " + name
+			m.snapshots = listSnapshots(m.editingContainer.Name)
+		}
+	}
+	m.state = stateSnapshots
+	m.textInput.Reset()
+	return m, nil
+}
+
+func (m model) handleSnapshotConfirmKeys(key string) (tea.Model, tea.Cmd) {
+	if m.editingContainer == nil || len(m.snapshots) == 0 || m.snapshotCursor >= len(m.snapshots) {
+		m.state = stateSnapshots
+		return m, nil
+	}
+
+	snap := m.snapshots[m.snapshotCursor]
+
+	switch key {
+	case "y", "Y":
+		if m.state == stateSnapshotRestore {
+			if err := restoreSnapshot(m.editingContainer.Name, snap.Name); err != nil {
+				m.status = "Restore failed: " + err.Error()
+			} else {
+				m.status = "Restored from snapshot: " + snap.Name
+			}
+		} else if m.state == stateSnapshotDelete {
+			if err := deleteSnapshot(m.editingContainer.Name, snap.Name); err != nil {
+				m.status = "Delete failed: " + err.Error()
+			} else {
+				m.status = "Deleted snapshot: " + snap.Name
+				m.snapshots = listSnapshots(m.editingContainer.Name)
+				if m.snapshotCursor >= len(m.snapshots) && m.snapshotCursor > 0 {
+					m.snapshotCursor--
+				}
+			}
+		}
+		m.state = stateSnapshots
+	case "n", "N", "esc", "q":
+		m.state = stateSnapshots
+	}
+	return m, nil
+}
+
 // TUI View method
 func (m model) View() string {
 	switch m.state {
@@ -2041,6 +2223,32 @@ func (m model) View() string {
 		}
 		return "No container selected"
 
+	case stateSnapshots:
+		return m.viewSnapshots()
+
+	case stateSnapshotCreate:
+		if m.editingContainer != nil {
+			return fmt.Sprintf("📸 CREATE SNAPSHOT: %s\n\nSnapshot name:\n\n%s\n\n[Enter] Create  [Esc] Cancel",
+				m.editingContainer.Name, m.textInput.View())
+		}
+		return "No container selected"
+
+	case stateSnapshotRestore:
+		if m.editingContainer != nil && m.snapshotCursor < len(m.snapshots) {
+			snap := m.snapshots[m.snapshotCursor]
+			return fmt.Sprintf("⚠️  RESTORE SNAPSHOT\n\nRestore %s to snapshot '%s'?\n\nCreated: %s\n\nThis will stop the container and restore its state.\nCurrent state will be lost!\n\n[Y] Yes, restore  [N] No, cancel",
+				m.editingContainer.Name, snap.Name, snap.CreatedAt.Format("2006-01-02 15:04:05"))
+		}
+		return "No snapshot selected"
+
+	case stateSnapshotDelete:
+		if m.editingContainer != nil && m.snapshotCursor < len(m.snapshots) {
+			snap := m.snapshots[m.snapshotCursor]
+			return fmt.Sprintf("🗑️  DELETE SNAPSHOT\n\nDelete snapshot '%s' from %s?\n\nCreated: %s\n\n[Y] Yes, delete  [N] No, cancel",
+				snap.Name, m.editingContainer.Name, snap.CreatedAt.Format("2006-01-02 15:04:05"))
+		}
+		return "No snapshot selected"
+
 	case stateLogs:
 		return fmt.Sprintf("📜 LOGS: %s  [Esc] Back\n%s\n\n%s", m.currentSvc, strings.Repeat("─", 60), m.logContent)
 
@@ -2121,6 +2329,42 @@ func (m model) viewUntracked() string {
 	return s
 }
 
+func (m model) viewSnapshots() string {
+	if m.editingContainer == nil {
+		return "No container selected"
+	}
+	c := m.editingContainer
+
+	s := fmt.Sprintf("📸 SNAPSHOTS: %s\n", c.Name)
+	s += "═══════════════════════════════════════════════════════════════════════════════\n\n"
+	s += "[n] New  [Enter/r] Restore  [d] Delete  [Esc] Back\n\n"
+
+	if len(m.snapshots) == 0 {
+		s += "  No snapshots found.\n"
+		s += "\n  Press [n] to create a snapshot.\n"
+	} else {
+		s += fmt.Sprintf("  %-30s  %-20s  %s\n", "NAME", "CREATED", "STATEFUL")
+		s += fmt.Sprintf("  %s\n", strings.Repeat("─", 60))
+		for i, snap := range m.snapshots {
+			cursor := "  "
+			if i == m.snapshotCursor {
+				cursor = "▶ "
+			}
+			stateful := "no"
+			if snap.Stateful {
+				stateful = "yes"
+			}
+			s += fmt.Sprintf("%s%-30s  %-20s  %s\n", cursor, snap.Name,
+				snap.CreatedAt.Format("2006-01-02 15:04:05"), stateful)
+		}
+	}
+
+	if m.status != "" {
+		s += "\n" + m.status
+	}
+	return s
+}
+
 func (m model) viewContainerDetail() string {
 	if m.editingContainer == nil {
 		return "No container selected"
@@ -2152,7 +2396,8 @@ func (m model) viewContainerDetail() string {
 	s += fmt.Sprintf("  🔑 SSH:         ssh -l %s <host> (via sshpiper on port 22)\n", c.Name)
 	s += "\n"
 	s += "───────────────────────────────────────────────────────────────────────────────\n"
-	s += "[s] Start/Stop  [r] Restart  [p] Change Port  [a] Change Auth  [u] Update Shelley  [Esc] Back\n"
+	s += "[s] Start/Stop  [r] Restart  [p] Change Port  [a] Change Auth\n"
+	s += "[S] Snapshots   [u] Update Shelley  [Esc] Back\n"
 
 	if m.status != "" {
 		s += "\n📋 " + m.status
