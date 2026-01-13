@@ -40,6 +40,7 @@ Each container is a fully persistent Linux sandbox running the **exeuntu** OCI i
 
 - **Fresh/minimal Linux installation**: Ubuntu 22.04+ or Debian 12+ (amd64 or arm64)
 - **VPS or VM**: Works on most virtualization platforms (KVM, VMware, Xen, EC2, GCP, Azure, etc.)
+- **Go 1.21+**: Required to build the tools (see Quick Start for installation)
 - **A domain name** with DNS you control
 - **A regular user with sudo access** (avoid running as root)
 
@@ -57,20 +58,49 @@ All administrative tasks should be performed as a regular user with `sudo` privi
 
 ## Quick Start
 
+### 1. Install Go (if not already installed)
+
 ```bash
-# 1. Build the tools
+# Ubuntu/Debian - install from official Go downloads
+wget https://go.dev/dl/go1.23.5.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.23.5.linux-amd64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify installation
+go version
+```
+
+> **Note**: For ARM64 systems, use `go1.23.5.linux-arm64.tar.gz` instead.
+> Check https://go.dev/dl/ for the latest version.
+
+### 2. Build and Install
+
+```bash
+# Clone and build
+git clone https://github.com/boldsoftware/shelley-lxc.git
+cd shelley-lxc
 go build -o incus_manager incus_manager.go
 go build -o incus_sync_daemon incus_sync_daemon.go
 
-# 2. Install (as root)
+# Install binaries
 sudo cp incus_manager incus_sync_daemon /usr/local/bin/
+```
 
-# 3. Run first-time setup (auto-installs dependencies)
+### 3. Run First-Time Setup
+
+```bash
+# This auto-installs Incus, Caddy, and SSHPiper
 sudo incus_manager
+```
 
-# 4. Configure SSH (see below) - REQUIRED before creating containers
+### 4. Configure SSH (Required)
 
-# 5. Create your first container!
+See the [SSHPiper Manual Setup](#%EF%B8%8F-required-sshpiper-manual-setup-after-first-run) section below.
+
+### 5. Create Your First Container
+
+```bash
 sudo incus_manager
 ```
 
