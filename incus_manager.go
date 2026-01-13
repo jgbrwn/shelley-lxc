@@ -325,7 +325,7 @@ func installSSHPiper() error {
 		arch = "arm64"
 	}
 
-	url := fmt.Sprintf("https://github.com/tg123/sshpiper/releases/latest/download/sshpiperd_linux_%s.tar.gz", arch)
+	url := fmt.Sprintf("https://github.com/tg123/sshpiper/releases/latest/download/sshpiperd_with_plugins_linux_%s.tar.gz", arch)
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
