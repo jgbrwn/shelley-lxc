@@ -63,6 +63,8 @@ const (
 	stateSnapshotCreate     // Create new snapshot (name input)
 	stateSnapshotRestore    // Confirm restore from snapshot
 	stateSnapshotDelete     // Confirm delete snapshot
+	stateDNSTokens          // View/manage DNS API tokens
+	stateDNSTokenEdit       // Edit/add DNS token
 )
 
 // DNS Provider types
@@ -162,6 +164,9 @@ type model struct {
 	snapshots       []snapshotEntry
 	snapshotCursor  int
 	newSnapshotName string
+
+	// DNS token editing
+	editingDNSProvider dnsProvider
 }
 
 func initialModel() model {
@@ -460,6 +465,13 @@ func bootstrapCmd() tea.Cmd {
 		// Migration for existing DBs
 		db.Exec(`ALTER TABLE containers ADD COLUMN auth_user TEXT DEFAULT ''`)
 		db.Exec(`ALTER TABLE containers ADD COLUMN auth_hash TEXT DEFAULT ''`)
+
+		// DNS tokens table
+		db.Exec(`CREATE TABLE IF NOT EXISTS dns_tokens (
+			provider TEXT PRIMARY KEY,
+			token TEXT NOT NULL,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`)
 
 		// Sync configs for all running containers (handles IP changes after reboot)
 		syncRunningContainers(db)
@@ -1087,6 +1099,62 @@ func restartContainer(db *sql.DB, name string) error {
 	return nil
 }
 
+// DNS token management
+func getDNSToken(db *sql.DB, provider dnsProvider) string {
+	var providerName string
+	switch provider {
+	case dnsCloudflare:
+		providerName = "cloudflare"
+	case dnsDesec:
+		providerName = "desec"
+	default:
+		return ""
+	}
+	var token string
+	db.QueryRow("SELECT token FROM dns_tokens WHERE provider = ?", providerName).Scan(&token)
+	return token
+}
+
+func saveDNSToken(db *sql.DB, provider dnsProvider, token string) error {
+	var providerName string
+	switch provider {
+	case dnsCloudflare:
+		providerName = "cloudflare"
+	case dnsDesec:
+		providerName = "desec"
+	default:
+		return fmt.Errorf("unknown provider")
+	}
+	_, err := db.Exec(`INSERT OR REPLACE INTO dns_tokens (provider, token, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+		providerName, token)
+	return err
+}
+
+func deleteDNSToken(db *sql.DB, provider dnsProvider) error {
+	var providerName string
+	switch provider {
+	case dnsCloudflare:
+		providerName = "cloudflare"
+	case dnsDesec:
+		providerName = "desec"
+	default:
+		return fmt.Errorf("unknown provider")
+	}
+	_, err := db.Exec("DELETE FROM dns_tokens WHERE provider = ?", providerName)
+	return err
+}
+
+func providerName(p dnsProvider) string {
+	switch p {
+	case dnsCloudflare:
+		return "Cloudflare"
+	case dnsDesec:
+		return "deSEC"
+	default:
+		return "None"
+	}
+}
+
 // DNS functions
 func createDNSRecord(domain, ip string, provider dnsProvider, token string, cfProxy bool) error {
 	switch provider {
@@ -1586,6 +1654,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSnapshotCreateKeys(key)
 	case stateSnapshotRestore, stateSnapshotDelete:
 		return m.handleSnapshotConfirmKeys(key)
+	case stateDNSTokens:
+		return m.handleDNSTokensKeys(key)
+	case stateDNSTokenEdit:
+		return m.handleDNSTokenEditKeys(key)
 	case stateLogs:
 		// Any key returns to list
 		if key == "q" || key == "esc" {
@@ -1659,6 +1731,9 @@ func (m model) handleListKeys(key string) (tea.Model, tea.Cmd) {
 			m.state = stateUntracked
 			m.cursor = 0
 		}
+	case "D":
+		// DNS token management
+		m.state = stateDNSTokens
 	}
 	return m, nil
 }
@@ -1761,6 +1836,11 @@ func (m model) handleInputKeys(key string) (tea.Model, tea.Cmd) {
 
 	case stateCreateDNSToken:
 		m.newDNSToken = val
+		// Save token for future use
+		if val != "" {
+			saveDNSToken(m.db, m.newDNSProvider, val)
+			m.status = fmt.Sprintf("%s token saved", providerName(m.newDNSProvider))
+		}
 		m.state = stateCreateAppPort
 		m.textInput.Placeholder = "8000"
 		m.textInput.SetValue("8000")
@@ -1949,25 +2029,46 @@ func (m model) handleDNSProviderKeys(key string) (tea.Model, tea.Cmd) {
 		m.state = stateCreateCFProxy
 	case "3":
 		m.newDNSProvider = dnsDesec
-		m.state = stateCreateDNSToken
-		m.textInput.Placeholder = "deSEC API Token"
-		m.textInput.Focus()
+		// Check for saved token
+		if savedToken := getDNSToken(m.db, dnsDesec); savedToken != "" {
+			m.newDNSToken = savedToken
+			m.status = "Using saved deSEC token"
+			m.state = stateCreateAppPort
+			m.textInput.Placeholder = "8000"
+			m.textInput.SetValue("8000")
+			m.textInput.Focus()
+		} else {
+			m.state = stateCreateDNSToken
+			m.textInput.Placeholder = "deSEC API Token"
+			m.textInput.Focus()
+		}
 	}
 	return m, nil
 }
 
 func (m model) handleCFProxyKeys(key string) (tea.Model, tea.Cmd) {
+	setProxy := func(proxy bool) {
+		m.newCFProxy = proxy
+		// Check for saved token
+		if savedToken := getDNSToken(m.db, dnsCloudflare); savedToken != "" {
+			m.newDNSToken = savedToken
+			m.status = "Using saved Cloudflare token"
+			m.state = stateCreateAppPort
+			m.textInput.Placeholder = "8000"
+			m.textInput.SetValue("8000")
+			m.textInput.Focus()
+		} else {
+			m.state = stateCreateDNSToken
+			m.textInput.Placeholder = "Cloudflare API Token"
+			m.textInput.Focus()
+		}
+	}
+
 	switch key {
 	case "1", "n", "N":
-		m.newCFProxy = false
-		m.state = stateCreateDNSToken
-		m.textInput.Placeholder = "Cloudflare API Token"
-		m.textInput.Focus()
+		setProxy(false)
 	case "2", "y", "Y":
-		m.newCFProxy = true
-		m.state = stateCreateDNSToken
-		m.textInput.Placeholder = "Cloudflare API Token"
-		m.textInput.Focus()
+		setProxy(true)
 	}
 	return m, nil
 }
@@ -2132,6 +2233,65 @@ func (m model) handleSnapshotConfirmKeys(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) handleDNSTokensKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc", "q":
+		m.state = stateList
+		return m, m.refreshContainers()
+	case "1":
+		// Edit Cloudflare token
+		m.editingDNSProvider = dnsCloudflare
+		m.state = stateDNSTokenEdit
+		m.textInput.Placeholder = "Cloudflare API Token"
+		if token := getDNSToken(m.db, dnsCloudflare); token != "" {
+			m.textInput.SetValue(token)
+		} else {
+			m.textInput.Reset()
+		}
+		m.textInput.Focus()
+	case "2":
+		// Edit deSEC token
+		m.editingDNSProvider = dnsDesec
+		m.state = stateDNSTokenEdit
+		m.textInput.Placeholder = "deSEC API Token"
+		if token := getDNSToken(m.db, dnsDesec); token != "" {
+			m.textInput.SetValue(token)
+		} else {
+			m.textInput.Reset()
+		}
+		m.textInput.Focus()
+	case "3":
+		// Delete Cloudflare token
+		deleteDNSToken(m.db, dnsCloudflare)
+		m.status = "Cloudflare token deleted"
+	case "4":
+		// Delete deSEC token
+		deleteDNSToken(m.db, dnsDesec)
+		m.status = "deSEC token deleted"
+	}
+	return m, nil
+}
+
+func (m model) handleDNSTokenEditKeys(key string) (tea.Model, tea.Cmd) {
+	if key == "esc" {
+		m.state = stateDNSTokens
+		m.textInput.Reset()
+		return m, nil
+	}
+	if key != "enter" {
+		return m, nil
+	}
+
+	token := strings.TrimSpace(m.textInput.Value())
+	if token != "" {
+		saveDNSToken(m.db, m.editingDNSProvider, token)
+		m.status = fmt.Sprintf("%s token saved", providerName(m.editingDNSProvider))
+	}
+	m.state = stateDNSTokens
+	m.textInput.Reset()
+	return m, nil
+}
+
 // TUI View method
 func (m model) View() string {
 	switch m.state {
@@ -2287,6 +2447,13 @@ func (m model) View() string {
 		}
 		return "No snapshot selected"
 
+	case stateDNSTokens:
+		return m.viewDNSTokens()
+
+	case stateDNSTokenEdit:
+		return fmt.Sprintf("🔑 %s API TOKEN\n\nEnter token:\n\n%s\n\n[Enter] Save  [Esc] Cancel",
+			providerName(m.editingDNSProvider), m.textInput.View())
+
 	case stateLogs:
 		return fmt.Sprintf("📜 LOGS: %s  [Esc] Back\n%s\n\n%s", m.currentSvc, strings.Repeat("─", 60), m.logContent)
 
@@ -2319,7 +2486,8 @@ func (m model) viewModelSelect(title string) string {
 func (m model) viewList() string {
 	s := "🐧 INCUS CONTAINER MANAGER\n"
 	s += "═══════════════════════════════════════════════════════════════════════════════\n\n"
-	s += "[n] New  [Enter] Details  [d] Delete  [u] Untracked  [i] Incus Logs  [l] Sync Logs  [q] Quit\n\n"
+	s += "[n] New  [Enter] Details  [d] Delete  [u] Untracked  [D] DNS Tokens\n"
+	s += "[i] Incus Logs  [l] Sync Logs  [q] Quit\n\n"
 
 	if len(m.containers) == 0 {
 		s += "  No containers. Press [n] to create one.\n"
@@ -2363,6 +2531,40 @@ func (m model) viewUntracked() string {
 
 	if m.status != "" {
 		s += "\n" + m.status
+	}
+	return s
+}
+
+func (m model) viewDNSTokens() string {
+	s := "🔑 DNS API TOKENS\n"
+	s += "═══════════════════════════════════════════════════════════════════════════════\n\n"
+	s += "Saved tokens are used automatically when creating containers.\n\n"
+
+	// Check for saved tokens
+	cfToken := getDNSToken(m.db, dnsCloudflare)
+	desecToken := getDNSToken(m.db, dnsDesec)
+
+	cfStatus := "❌ Not configured"
+	if cfToken != "" {
+		// Show masked token
+		cfStatus = "✅ " + cfToken[:8] + "..." + cfToken[len(cfToken)-4:]
+	}
+
+	desecStatus := "❌ Not configured"
+	if desecToken != "" {
+		desecStatus = "✅ " + desecToken[:8] + "..." + desecToken[len(desecToken)-4:]
+	}
+
+	s += fmt.Sprintf("  Cloudflare:  %s\n", cfStatus)
+	s += fmt.Sprintf("  deSEC:       %s\n", desecStatus)
+	s += "\n"
+	s += "───────────────────────────────────────────────────────────────────────────────\n"
+	s += "[1] Set/Edit Cloudflare  [2] Set/Edit deSEC\n"
+	s += "[3] Delete Cloudflare    [4] Delete deSEC\n"
+	s += "[Esc] Back\n"
+
+	if m.status != "" {
+		s += "\n📋 " + m.status
 	}
 	return s
 }
