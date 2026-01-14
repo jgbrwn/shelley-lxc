@@ -28,7 +28,7 @@ Each container is a fully persistent Linux sandbox running the **exeuntu** OCI i
 | **Incus (LXC)** | Container runtime - lightweight, persistent Linux containers |
 | **Caddy** | Reverse proxy with automatic HTTPS (Let's Encrypt with ZeroSSL fallback) |
 | **SSHPiper** | SSH routing - access any container via `ssh container-name@host` |
-| **exeuntu** | OCI base image with development tools pre-installed |
+| **exeuntu** | OCI base image (maintained by exe.dev team) with development tools pre-installed |
 | **Shelley** | AI coding agent running inside each container |
 
 ## Components
@@ -61,6 +61,9 @@ All administrative tasks should be performed as a regular user with `sudo` privi
 ### 1. Install Go (if not already installed)
 
 ```bash
+# Install wget & git
+sudo apt update && sudo apt install wget git
+
 # Ubuntu/Debian - install from official Go downloads
 wget https://go.dev/dl/go1.23.5.linux-amd64.tar.gz
 sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.23.5.linux-amd64.tar.gz
