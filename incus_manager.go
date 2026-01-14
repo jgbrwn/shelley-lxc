@@ -844,9 +844,10 @@ func createContainerWithProgress(db *sql.DB, domain string, appPort int, sshKey 
 	// STEP 3: Launch container from exeuntu OCI image with systemd init
 	sendProgress(fmt.Sprintf("Launching container from %s...", ExeuntuImage))
 	sendProgress("This may take a minute if the image needs to be downloaded...")
+	// Note: boot.autostart is intentionally NOT set - when unset, Incus uses "last-state"
+	// behavior which restores the container to its previous running/stopped state on daemon restart
 	cmd := exec.Command("incus", "launch", ExeuntuImage, name,
 		"-c", "security.nesting=true",
-		"-c", "boot.autostart=true",
 		"-c", "oci.entrypoint=/sbin/init")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1043,8 +1044,8 @@ func importContainer(db *sql.DB, name, domain string, appPort int, authUser, aut
 		configureSSHPiper(name, ip)
 	}
 
-	// Set boot.autostart=true if not already set
-	exec.Command("incus", "config", "set", name, "boot.autostart=true").Run()
+	// Note: We intentionally don't set boot.autostart - when unset, Incus uses "last-state"
+	// behavior which is the desired behavior for imported containers
 
 	// Configure Shelley (shelley.json and API key)
 	if modelIndex >= 0 && modelIndex < len(availableModels) {
