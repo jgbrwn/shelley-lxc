@@ -1711,10 +1711,40 @@ func configureShelley(containerName string, modelIndex int, apiKey string) {
 		}
 	}
 
+	// Update shelley.service to include the API key environment variable
+	// systemd services don't source .bashrc, so we need to set env vars in the service file
+	servicePath := "/etc/systemd/system/shelley.service"
+	readCmd = exec.Command("incus", "exec", containerName, "--", "cat", servicePath)
+	serviceContent, _ := readCmd.Output()
+	if len(serviceContent) > 0 {
+		serviceStr := string(serviceContent)
+		envLine := fmt.Sprintf("Environment=%s=%s", model.EnvVarName, apiKey)
+		
+		// Check if there's already an Environment line for this var and replace it,
+		// or add it after the [Service] section
+		if strings.Contains(serviceStr, "Environment="+model.EnvVarName+"=") {
+			// Replace existing env var line
+			re := regexp.MustCompile(`Environment=` + model.EnvVarName + `=.*`)
+			serviceStr = re.ReplaceAllString(serviceStr, envLine)
+		} else if strings.Contains(serviceStr, "[Service]") {
+			// Add after [Service] line
+			serviceStr = strings.Replace(serviceStr, "[Service]", "[Service]\n"+envLine, 1)
+		}
+		
+		tmpService, err := os.CreateTemp("", "shelley-service")
+		if err == nil {
+			tmpService.WriteString(serviceStr)
+			tmpService.Close()
+			exec.Command("incus", "file", "push", tmpService.Name(), containerName+servicePath).Run()
+			os.Remove(tmpService.Name())
+		}
+	}
+
 	// Reload systemd and enable shelley.socket (not .service - socket activation triggers the service)
 	// The socket listens on the port and activates shelley.service when connections arrive
 	exec.Command("incus", "exec", containerName, "--", "systemctl", "daemon-reload").Run()
 	exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "shelley.service").Run() // Stop if running directly
+	exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "shelley.socket").Run()  // Stop socket too
 	exec.Command("incus", "exec", containerName, "--", "systemctl", "enable", "--now", "shelley.socket").Run()
 
 	// Add API key to exedev's bashrc
