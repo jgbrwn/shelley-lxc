@@ -69,6 +69,7 @@ const (
 	stateSnapshotDelete     // Confirm delete snapshot
 	stateDNSTokens          // View/manage DNS API tokens
 	stateDNSTokenEdit       // Edit/add DNS token
+	stateCreating           // Container creation in progress
 )
 
 // DNS Provider types
@@ -130,6 +131,7 @@ type (
 	successMsg         string
 	tickMsg            time.Time
 	shelleyUpdateMsg   struct{ output string; success bool }
+	createDoneMsg      struct{ err error; name string; output string }    // Container creation completed
 )
 
 // TUI Model
@@ -171,6 +173,9 @@ type model struct {
 
 	// DNS token editing
 	editingDNSProvider dnsProvider
+
+	// Container creation progress
+	createOutput string
 }
 
 func initialModel() model {
@@ -746,8 +751,19 @@ func getUntrackedContainers(db *sql.DB) []string {
 	return untracked
 }
 
-func createContainer(db *sql.DB, domain string, appPort int, sshKey string, dnsProvider dnsProvider, dnsToken string, cfProxy bool, authUser, authPass string, modelIndex int, apiKey string) error {
+// createContainerWithProgress creates a container and sends progress updates via channel
+func createContainerWithProgress(db *sql.DB, domain string, appPort int, sshKey string, dnsProvider dnsProvider, dnsToken string, cfProxy bool, authUser, authPass string, modelIndex int, apiKey string, progress chan<- string) error {
+	sendProgress := func(msg string) {
+		if progress != nil {
+			select {
+			case progress <- msg:
+			default:
+			}
+		}
+	}
+
 	// Validate domain format
+	sendProgress("Validating domain format...")
 	if !isValidDomain(domain) {
 		return fmt.Errorf("invalid domain format: %s", domain)
 	}
@@ -775,40 +791,48 @@ func createContainer(db *sql.DB, domain string, appPort int, sshKey string, dnsP
 	}
 
 	// STEP 1: Create DNS records FIRST (if provider specified)
-	// DNS points to HOST's public IP, gives time for propagation while container starts
 	if dnsProvider != dnsNone && dnsToken != "" {
+		sendProgress("Creating DNS records...")
 		hostIP := getHostPublicIP()
 		if hostIP != "" {
 			if err := createDNSRecord(domain, hostIP, dnsProvider, dnsToken, cfProxy); err != nil {
-				fmt.Fprintf(os.Stderr, "DNS creation warning: %v\n", err)
+				sendProgress(fmt.Sprintf("DNS warning: %v", err))
+			} else {
+				sendProgress(fmt.Sprintf("Created DNS record: %s -> %s", domain, hostIP))
 			}
 			// Also create shelley subdomain (never proxied - needs direct access)
 			createDNSRecord("shelley."+domain, hostIP, dnsProvider, dnsToken, false)
+			sendProgress(fmt.Sprintf("Created DNS record: shelley.%s -> %s", domain, hostIP))
 		} else {
-			fmt.Fprintf(os.Stderr, "DNS warning: could not determine host public IP\n")
+			sendProgress("DNS warning: could not determine host public IP")
 		}
 	}
 
-	// STEP 2: Clean up any stale container with same name (handles failed previous creations)
-	// This prevents "In use" errors from partial container creations
+	// STEP 2: Clean up any stale container with same name
+	sendProgress("Cleaning up any stale containers...")
 	exec.Command("incus", "delete", name, "--force").Run()
 
 	// STEP 3: Launch container from exeuntu OCI image with systemd init
-	// boot.autostart=last-state ensures container respects its previous state on host reboot
-	// (running containers restart, stopped containers stay stopped)
+	sendProgress(fmt.Sprintf("Launching container from %s...", ExeuntuImage))
+	sendProgress("This may take a minute if the image needs to be downloaded...")
 	cmd := exec.Command("incus", "launch", ExeuntuImage, name,
 		"-c", "security.nesting=true",
 		"-c", "boot.autostart=last-state",
 		"-c", "oci.entrypoint=/sbin/init")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to create container: %s - %w", string(out), err)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		sendProgress(fmt.Sprintf("Error: %s", string(out)))
+		return fmt.Errorf("failed to create container: %s", string(out))
 	}
+	sendProgress(string(out))
 
 	// Wait for container to start
+	sendProgress("Waiting for container to initialize...")
 	time.Sleep(5 * time.Second)
 
-	// STEP 4: Add SSH key to container using file push (safer than shell echo)
+	// STEP 4: Add SSH key to container
 	if sshKey != "" {
+		sendProgress("Configuring SSH key...")
 		exec.Command("incus", "exec", name, "--", "mkdir", "-p", "/home/exedev/.ssh").Run()
 		
 		// Write key to temp file and push it
@@ -826,9 +850,16 @@ func createContainer(db *sql.DB, domain string, appPort int, sshKey string, dnsP
 	}
 
 	// STEP 5: Get container IP
+	sendProgress("Getting container IP address...")
 	_, ip, _, _ := getContainerStatus(name)
+	if ip != "" {
+		sendProgress(fmt.Sprintf("Container IP: %s", ip))
+	} else {
+		sendProgress("Warning: Could not get container IP yet")
+	}
 
 	// STEP 6: Hash password for Shelley auth
+	sendProgress("Configuring authentication...")
 	authHash := ""
 	if authUser != "" && authPass != "" {
 		hashOut, hashErr := exec.Command("caddy", "hash-password", "--plaintext", authPass).Output()
@@ -837,30 +868,35 @@ func createContainer(db *sql.DB, domain string, appPort int, sshKey string, dnsP
 		}
 	}
 
-	// STEP 7: Save to database AFTER successful container creation
-	_, err := db.Exec("INSERT INTO containers (name, domain, app_port, auth_user, auth_hash) VALUES (?, ?, ?, ?, ?)",
+	// STEP 7: Save to database
+	sendProgress("Saving to database...")
+	_, err = db.Exec("INSERT INTO containers (name, domain, app_port, auth_user, auth_hash) VALUES (?, ?, ?, ?, ?)",
 		name, domain, appPort, authUser, authHash)
 	if err != nil {
-		// Rollback: delete the container if DB insert fails
+		sendProgress("Database error, rolling back...")
 		exec.Command("incus", "delete", name, "--force").Run()
 		return fmt.Errorf("failed to save to database: %w", err)
 	}
 
-	// STEP 8: Configure Caddy with auth (DNS has had time to propagate during container startup)
+	// STEP 8: Configure Caddy reverse proxy
+	sendProgress("Configuring Caddy reverse proxy...")
 	if ip != "" {
 		updateCaddyConfig(name, domain, ip, appPort, authUser, authHash)
 	}
 
 	// STEP 9: Configure SSHPiper
+	sendProgress("Configuring SSH routing...")
 	if ip != "" {
 		configureSSHPiper(name, ip)
 	}
 
-	// STEP 10: Configure Shelley (shelley.json and API key)
+	// STEP 10: Configure Shelley
 	if modelIndex >= 0 && modelIndex < len(availableModels) {
+		sendProgress(fmt.Sprintf("Configuring Shelley with %s...", availableModels[modelIndex].Name))
 		configureShelley(name, modelIndex, apiKey)
 	}
 
+	sendProgress("Container creation complete!")
 	return nil
 }
 
@@ -1530,6 +1566,45 @@ func configureShelley(containerName string, modelIndex int, apiKey string) {
 	exec.Command("incus", "exec", containerName, "--", "chown", "exedev:exedev", bashrcPath).Run()
 }
 
+// createContainerAsync creates a container asynchronously and returns progress/done messages
+func createContainerAsync(db *sql.DB, domain string, appPort int, sshKey string, dnsProvider dnsProvider, dnsToken string, cfProxy bool, authUser, authPass string, modelIndex int, apiKey string) tea.Cmd {
+	return func() tea.Msg {
+		// Create a channel to collect progress messages
+		progressChan := make(chan string, 100)
+		doneChan := make(chan error, 1)
+
+		// Run creation in background
+		go func() {
+			err := createContainerWithProgress(db, domain, appPort, sshKey, dnsProvider, dnsToken, cfProxy, authUser, authPass, modelIndex, apiKey, progressChan)
+			close(progressChan)
+			doneChan <- err
+		}()
+
+		// Collect all progress messages
+		var output strings.Builder
+		for msg := range progressChan {
+			output.WriteString(msg)
+			output.WriteString("\n")
+		}
+
+		err := <-doneChan
+
+		// Generate container name for the done message
+		name := strings.ReplaceAll(domain, ".", "-")
+		re := regexp.MustCompile(`[^a-zA-Z0-9-]`)
+		name = re.ReplaceAllString(name, "")
+		if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
+			name = "c-" + name
+		}
+		if len(name) > 50 {
+			name = name[:50]
+		}
+		name = strings.TrimSuffix(name, "-")
+
+		return createDoneMsg{err: err, name: name, output: output.String()}
+	}
+}
+
 // Log streaming
 func streamLogsCmd(service string) tea.Cmd {
 	return func() tea.Msg {
@@ -1605,6 +1680,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "Shelley update failed"
 		}
+		return m, nil
+
+	case createDoneMsg:
+		m.createOutput = msg.output
+		if msg.err != nil {
+			m.status = "Create failed: " + msg.err.Error()
+			m.createOutput += "\n❌ " + msg.err.Error()
+		} else {
+			m.status = "Created container: " + msg.name
+			m.createOutput += "\n✅ Container created successfully!"
+		}
+		// Stay on creating screen so user can see the output
 		return m, nil
 
 	case tickMsg:
@@ -1686,6 +1773,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleDNSTokensKeys(key)
 	case stateDNSTokenEdit:
 		return m.handleDNSTokenEditKeys(key)
+	case stateCreating:
+		// Allow dismissing only when creation is complete (has checkmark or X)
+		if strings.Contains(m.createOutput, "✅") || strings.Contains(m.createOutput, "❌") {
+			if key == "enter" || key == "esc" || key == "q" {
+				m.state = stateList
+				m.createOutput = ""
+				return m, m.refreshContainers()
+			}
+		}
+		return m, nil
 	case stateLogs:
 		// Any key returns to list
 		if key == "q" || key == "esc" {
@@ -1923,16 +2020,11 @@ func (m model) handleInputKeys(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.newAPIKey = val
-		m.status = "Creating container..."
-		err := createContainer(m.db, m.newDomain, m.newAppPort, m.newSSHKey, m.newDNSProvider, m.newDNSToken, m.newCFProxy, m.newAuthUser, m.newAuthPass, m.newModelIndex, m.newAPIKey)
-		if err != nil {
-			m.status = "Create failed: " + err.Error()
-		} else {
-			m.status = "Created container for " + m.newDomain
-		}
-		m.state = stateList
+		m.createOutput = "Starting container creation...\n"
+		m.state = stateCreating
 		m.textInput.Reset()
-		return m, m.refreshContainers()
+		// Start async creation
+		return m, createContainerAsync(m.db, m.newDomain, m.newAppPort, m.newSSHKey, m.newDNSProvider, m.newDNSToken, m.newCFProxy, m.newAuthUser, m.newAuthPass, m.newModelIndex, m.newAPIKey)
 
 	case stateEditAppPort:
 		port := DefaultAppPort
@@ -2481,6 +2573,17 @@ func (m model) View() string {
 	case stateDNSTokenEdit:
 		return fmt.Sprintf("🔑 %s API TOKEN\n\nEnter token:\n\n%s\n\n[Enter] Save  [Esc] Cancel",
 			providerName(m.editingDNSProvider), m.textInput.View())
+
+	case stateCreating:
+		s := "📦 CREATING CONTAINER\n"
+		s += "═══════════════════════════════════════════════════════════════════════════════\n\n"
+		s += m.createOutput
+		if strings.Contains(m.createOutput, "✅") || strings.Contains(m.createOutput, "❌") {
+			s += "\n[Enter] Continue"
+		} else {
+			s += "\nPlease wait..."
+		}
+		return s
 
 	case stateLogs:
 		return fmt.Sprintf("📜 LOGS: %s  [Esc] Back\n%s\n\n%s", m.currentSvc, strings.Repeat("─", 60), m.logContent)
