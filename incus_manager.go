@@ -1632,12 +1632,15 @@ func configureSSHPiper(name, ip, userPublicKey string) {
 	}
 }
 
-// configureShelley updates shelley.json and sets the API key in bashrc
+// configureShelley updates shelley.json, sets the API key in bashrc, and enables shelley.service
 func configureShelley(containerName string, modelIndex int, apiKey string) {
 	if modelIndex < 0 || modelIndex >= len(availableModels) {
 		return
 	}
 	model := availableModels[modelIndex]
+
+	// Create /exe.dev directory first
+	exec.Command("incus", "exec", containerName, "--", "mkdir", "-p", "/exe.dev").Run()
 
 	// Create the new shelley.json content
 	// Remove: llm_gateway, terminal_url, links (back to exe.dev)
@@ -1658,6 +1661,25 @@ func configureShelley(containerName string, modelIndex int, apiKey string) {
 	exec.Command("incus", "exec", containerName, "--", "chown", "root:root", "/exe.dev/shelley.json").Run()
 	exec.Command("incus", "exec", containerName, "--", "chmod", "644", "/exe.dev/shelley.json").Run()
 
+	// Update shelley.socket to listen on all interfaces (0.0.0.0:9999 instead of 127.0.0.1:9999)
+	socketPath := "/etc/systemd/system/shelley.socket"
+	readCmd := exec.Command("incus", "exec", containerName, "--", "cat", socketPath)
+	socketContent, _ := readCmd.Output()
+	if len(socketContent) > 0 {
+		updatedSocket := strings.Replace(string(socketContent), "ListenStream=127.0.0.1:9999", "ListenStream=0.0.0.0:9999", 1)
+		tmpSocket, err := os.CreateTemp("", "shelley-socket")
+		if err == nil {
+			tmpSocket.WriteString(updatedSocket)
+			tmpSocket.Close()
+			exec.Command("incus", "file", "push", tmpSocket.Name(), containerName+socketPath).Run()
+			os.Remove(tmpSocket.Name())
+		}
+	}
+
+	// Reload systemd and enable shelley.service
+	exec.Command("incus", "exec", containerName, "--", "systemctl", "daemon-reload").Run()
+	exec.Command("incus", "exec", containerName, "--", "systemctl", "enable", "--now", "shelley.service").Run()
+
 	// Add API key to exedev's bashrc
 	exportLine := fmt.Sprintf("export %s='%s'", model.EnvVarName, apiKey)
 	
@@ -1665,7 +1687,7 @@ func configureShelley(containerName string, modelIndex int, apiKey string) {
 	bashrcPath := "/home/exedev/.bashrc"
 	
 	// Read current bashrc
-	readCmd := exec.Command("incus", "exec", containerName, "--", "cat", bashrcPath)
+	readCmd = exec.Command("incus", "exec", containerName, "--", "cat", bashrcPath)
 	currentBashrc, _ := readCmd.Output()
 	
 	// Check if this env var already exists
