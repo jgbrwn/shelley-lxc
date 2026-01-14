@@ -182,6 +182,19 @@ func initialModel() model {
 	}
 }
 
+// isInputState returns true if the current state requires text input
+func (m model) isInputState() bool {
+	switch m.state {
+	case stateCreateDomain, stateCreateDNSToken, stateCreateAppPort, stateCreateSSHKey,
+		stateCreateAuthUser, stateCreateAuthPass, stateCreateAPIKey,
+		stateEditAppPort, stateEditAuthUser, stateEditAuthPass,
+		stateImportContainer, stateImportAuthUser, stateImportAuthPass, stateImportAPIKey,
+		stateSnapshotCreate, stateDNSTokenEdit:
+		return true
+	}
+	return false
+}
+
 func (m model) Init() tea.Cmd {
 	return checkPrerequisitesCmd()
 }
@@ -1612,6 +1625,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refreshContainers()
 
 	case tea.KeyMsg:
+		// For text input states, update the text input first, then handle special keys
+		if m.isInputState() {
+			var cmd tea.Cmd
+			m.textInput, cmd = m.textInput.Update(msg)
+			// Then handle enter/esc
+			newModel, newCmd := m.handleKey(msg)
+			if newCmd != nil {
+				return newModel, tea.Batch(cmd, newCmd)
+			}
+			return newModel, cmd
+		}
 		return m.handleKey(msg)
 	}
 
