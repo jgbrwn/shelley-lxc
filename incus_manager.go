@@ -530,7 +530,7 @@ func syncRunningContainers(db *sql.DB) {
 		status, ip, _, _ := getContainerStatus(name)
 		if status == "running" && ip != "" {
 			updateCaddyConfig(name, domain, ip, appPort, authUser.String, authHash.String)
-			configureSSHPiper(name, ip)
+			updateSSHPiperUpstream(name, ip)
 		}
 	}
 }
@@ -880,26 +880,7 @@ func createContainerWithProgress(db *sql.DB, domain string, appPort int, sshKey 
 	exec.Command("incus", "exec", name, "--", "systemctl", "unmask", "ssh", "ssh.socket").Run()
 	exec.Command("incus", "exec", name, "--", "systemctl", "enable", "--now", "ssh").Run()
 
-	// STEP 5: Add SSH key to container
-	if sshKey != "" {
-		sendProgress("Configuring SSH key...")
-		exec.Command("incus", "exec", name, "--", "mkdir", "-p", "/home/exedev/.ssh").Run()
-		
-		// Write key to temp file and push it
-		tmpFile, err := os.CreateTemp("", "sshkey")
-		if err == nil {
-			tmpFile.WriteString(strings.TrimSpace(sshKey) + "\n")
-			tmpFile.Close()
-			exec.Command("incus", "file", "push", tmpFile.Name(), name+"/home/exedev/.ssh/authorized_keys").Run()
-			os.Remove(tmpFile.Name())
-		}
-		
-		exec.Command("incus", "exec", name, "--", "chown", "-R", "exedev:exedev", "/home/exedev/.ssh").Run()
-		exec.Command("incus", "exec", name, "--", "chmod", "700", "/home/exedev/.ssh").Run()
-		exec.Command("incus", "exec", name, "--", "chmod", "600", "/home/exedev/.ssh/authorized_keys").Run()
-	}
-
-	// STEP 6: Get container IP
+	// STEP 5: Get container IP (SSH key setup is handled by configureSSHPiper later)
 	sendProgress("Getting container IP address...")
 	_, ip, _, _ := getContainerStatus(name)
 	if ip != "" {
@@ -934,10 +915,10 @@ func createContainerWithProgress(db *sql.DB, domain string, appPort int, sshKey 
 		updateCaddyConfig(name, domain, ip, appPort, authUser, authHash)
 	}
 
-	// STEP 10: Configure SSHPiper
+	// STEP 10: Configure SSHPiper with key mapping
 	sendProgress("Configuring SSH routing...")
 	if ip != "" {
-		configureSSHPiper(name, ip)
+		configureSSHPiper(name, ip, sshKey)
 	}
 
 	// STEP 11: Configure Shelley
@@ -1059,9 +1040,11 @@ func importContainer(db *sql.DB, name, domain string, appPort int, authUser, aut
 	}
 
 	// Configure Caddy and SSHPiper
+	// Note: For imports, we don't have the user's SSH key, so public key auth won't work
+	// until the user manually adds their key to the container or SSHPiper config
 	if ip != "" {
 		updateCaddyConfig(name, domain, ip, appPort, authUser, authHash)
-		configureSSHPiper(name, ip)
+		configureSSHPiper(name, ip, "") // Empty key - user must configure SSH manually
 	}
 
 	// Note: We intentionally don't set boot.autostart - when unset, Incus uses "last-state"
@@ -1164,7 +1147,7 @@ func startContainer(db *sql.DB, name string) error {
 		var authUser, authHash sql.NullString
 		if err := db.QueryRow("SELECT domain, app_port, auth_user, auth_hash FROM containers WHERE name = ?", name).Scan(&domain, &appPort, &authUser, &authHash); err == nil {
 			updateCaddyConfig(name, domain, ip, appPort, authUser.String, authHash.String)
-			configureSSHPiper(name, ip)
+			updateSSHPiperUpstream(name, ip)
 		}
 	}
 	return nil
@@ -1196,7 +1179,7 @@ func restartContainer(db *sql.DB, name string) error {
 		var authUser, authHash sql.NullString
 		if err := db.QueryRow("SELECT domain, app_port, auth_user, auth_hash FROM containers WHERE name = ?", name).Scan(&domain, &appPort, &authUser, &authHash); err == nil {
 			updateCaddyConfig(name, domain, ip, appPort, authUser.String, authHash.String)
-			configureSSHPiper(name, ip)
+			updateSSHPiperUpstream(name, ip)
 		}
 	}
 	return nil
@@ -1545,11 +1528,59 @@ func updateContainerAuth(db *sql.DB, name, newUser, newPass string) error {
 	return err
 }
 
-func configureSSHPiper(name, ip string) {
+// updateSSHPiperUpstream updates just the upstream IP (for IP changes after reboot)
+func updateSSHPiperUpstream(name, ip string) {
 	pDir := filepath.Join(SSHPiperRoot, name)
 	os.MkdirAll(pDir, 0700)
-	// Map to exedev user on container (where SSH key is installed)
 	os.WriteFile(filepath.Join(pDir, "sshpiper_upstream"), []byte("exedev@"+ip+":22\n"), 0600)
+}
+
+// configureSSHPiper sets up full SSHPiper config including key mapping for public key auth
+func configureSSHPiper(name, ip, userPublicKey string) {
+	pDir := filepath.Join(SSHPiperRoot, name)
+	os.MkdirAll(pDir, 0700)
+	
+	// Map to exedev user on container
+	os.WriteFile(filepath.Join(pDir, "sshpiper_upstream"), []byte("exedev@"+ip+":22\n"), 0600)
+	
+	// For public key auth, SSHPiper needs:
+	// 1. authorized_keys - client's public key (to verify incoming connection)
+	// 2. id_rsa - mapping private key (to authenticate with upstream/container)
+	// The container needs the public key corresponding to id_rsa
+	
+	idRsaPath := filepath.Join(pDir, "id_rsa")
+	idRsaPubPath := filepath.Join(pDir, "id_rsa.pub")
+	
+	// Generate mapping keypair if it doesn't exist
+	if _, err := os.Stat(idRsaPath); os.IsNotExist(err) {
+		exec.Command("ssh-keygen", "-t", "rsa", "-b", "4096", "-f", idRsaPath, "-N", "", "-C", "sshpiper-"+name).Run()
+		os.Chmod(idRsaPath, 0600)
+	}
+	
+	// Put user's public key in authorized_keys (for SSHPiper to verify client)
+	if userPublicKey != "" {
+		os.WriteFile(filepath.Join(pDir, "authorized_keys"), []byte(strings.TrimSpace(userPublicKey)+"\n"), 0600)
+	}
+	
+	// Push the mapping public key to the container
+	if pubKey, err := os.ReadFile(idRsaPubPath); err == nil {
+		// Create .ssh directory on container
+		exec.Command("incus", "exec", name, "--", "mkdir", "-p", "/home/exedev/.ssh").Run()
+		
+		// Write mapping public key to container's authorized_keys
+		tmpFile, err := os.CreateTemp("", "sshpiper_pubkey")
+		if err == nil {
+			tmpFile.Write(pubKey)
+			tmpFile.Close()
+			exec.Command("incus", "file", "push", tmpFile.Name(), name+"/home/exedev/.ssh/authorized_keys").Run()
+			os.Remove(tmpFile.Name())
+		}
+		
+		// Set correct permissions
+		exec.Command("incus", "exec", name, "--", "chown", "-R", "exedev:exedev", "/home/exedev/.ssh").Run()
+		exec.Command("incus", "exec", name, "--", "chmod", "700", "/home/exedev/.ssh").Run()
+		exec.Command("incus", "exec", name, "--", "chmod", "600", "/home/exedev/.ssh/authorized_keys").Run()
+	}
 }
 
 // configureShelley updates shelley.json and sets the API key in bashrc
