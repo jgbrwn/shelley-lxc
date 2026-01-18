@@ -45,11 +45,11 @@ const (
 func (i containerImage) String() string {
 	switch i {
 	case imageUbuntu:
-		return "images:ubuntu/latest"
+		return "images:ubuntu/noble" // Ubuntu 24.04 LTS
 	case imageDebian:
-		return "images:debian/latest"
+		return "images:debian/13" // Debian 13 (Trixie)
 	}
-	return "images:ubuntu/latest"
+	return "images:ubuntu/noble"
 }
 
 func (i containerImage) User() string {
@@ -65,11 +65,11 @@ func (i containerImage) User() string {
 func (i containerImage) DisplayName() string {
 	switch i {
 	case imageUbuntu:
-		return "Ubuntu (latest)"
+		return "Ubuntu 24.04 LTS (Noble)"
 	case imageDebian:
-		return "Debian (latest)"
+		return "Debian 13 (Trixie)"
 	}
-	return "Ubuntu (latest)"
+	return "Ubuntu 24.04 LTS (Noble)"
 }
 
 // State machine for TUI

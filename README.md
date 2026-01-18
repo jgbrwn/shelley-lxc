@@ -19,7 +19,7 @@ This is extremely alpha software and a very new project. Feel free to test and e
 
 This project provides the infrastructure to self-host your own AI coding environment on virtually any Linux server -- a VPS, cloud VM (EC2, GCP, Azure), or dedicated hardware. Because it uses **Incus/LXC** (container-based virtualization rather than nested VMs), it runs efficiently on KVM, VMware, Xen, Hyper-V, and most other hypervisors.
 
-Each container is a fully persistent Linux sandbox running latest **Ubuntu LTS** or **Debian**, with:
+Each container is a fully persistent Linux sandbox running **Ubuntu 24.04 LTS (Noble)** or **Debian 13 (Trixie)**, with:
 
 - **[shelley-cli](https://github.com/davidcjones79/shelley-cli)** - AI coding agent with terminal and web UI interfaces
 - **shelley-cli web UI** accessible via HTTPS at `shelley.yourdomain.com` (Basic Auth protected)
@@ -244,7 +244,7 @@ sudo incus_manager
 ## Features
 
 ### Container Management
-- **Native Incus Images**: Choose latest Ubuntu LTS or Debian
+- **Native Incus Images**: Choose Ubuntu 24.04 LTS or Debian 13
 - **Persistent Sandboxes**: Full filesystem persistence across restarts
 - **Boot Behavior**: Containers respect their last state on host reboot
 - **Resource Monitoring**: Live CPU and memory usage in TUI
