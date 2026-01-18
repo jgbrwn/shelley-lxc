@@ -3,13 +3,13 @@ This product includes software developed by third parties outlined below:
 Shelley-lxc | Incus Container Manager
 Copyright 2026 https://github.com/jgbrwn
 
-This product includes software developed by Bold Software, Inc. 
-(https://github.com/boldsoftware/shelley).
-
-Used as the web agent inside the exeuntu OCI image from Bold Software
-Also mechanism to update Shelley pulls down latest Shelley release from the Shelley Github Repo.
+shelley-cli (https://github.com/davidcjones79/shelley-cli)
+A fork of Shelley by Bold Software, Inc. (https://github.com/boldsoftware/shelley)
 Copyright 2026 Bold Software, Inc.
 Licensed under the Apache License, Version 2.0.
+
+Used as the AI coding agent (terminal and web UI) inside containers.
+Installed from source during container creation.
 
 Incus (Linux Containers)
 Copyright © 2023-present Linux Containers project
