@@ -2030,6 +2030,9 @@ echo ""
 	// STEP 9: Start shelley serve in a screen session
 	sendProgress("Starting shelley serve in screen session...")
 	
+	// Wait a moment for systemd and other services to fully settle
+	time.Sleep(3 * time.Second)
+	
 	// Create a launcher script that sources bashrc and runs shelley serve
 	launcherScript := `#!/bin/bash
 source ~/.bashrc
@@ -2048,13 +2051,22 @@ exec bash
 	rootExec("chown", containerUser+":"+containerUser, userHome+"/shelley-launcher.sh")
 
 	// Start shelley serve in a detached screen session named 'shelley'
-	startScreenScript := fmt.Sprintf(`
+	startScreenScript := fmt.Sprintf(`#!/bin/bash
+set -x  # Debug output
 export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
 cd ~
+echo "Current user: $(whoami)"
+echo "Home directory: $HOME"
+echo "Checking if launcher script exists..."
+ls -la %s/shelley-launcher.sh
+echo "Starting screen session..."
 screen -dmS shelley bash -c '%s/shelley-launcher.sh; exec bash'
-sleep 3
+echo "Waiting for screen to start..."
+sleep 5
+echo "Checking screen sessions..."
+screen -ls
 screen -ls | grep shelley | awk '{print $1}'
-`, userHome)
+`, userHome, userHome)
 	tmpScreenScript, _ := os.CreateTemp("", "start-screen.sh")
 	tmpScreenScript.WriteString(startScreenScript)
 	tmpScreenScript.Close()
@@ -2064,8 +2076,22 @@ screen -ls | grep shelley | awk '{print $1}'
 	
 	// Run the script and capture the screen session ID
 	screenCmd := exec.Command("incus", "exec", containerName, "--", "su", "-", containerUser, "-c", "/tmp/start-screen.sh")
-	screenOutput, _ := screenCmd.Output()
-	screenSessionID := strings.TrimSpace(string(screenOutput))
+	screenOutput, screenErr := screenCmd.CombinedOutput()
+	screenSessionID := ""
+	
+	if screenErr != nil {
+		sendProgress(fmt.Sprintf("Warning: screen command failed: %v", screenErr))
+		sendProgress(fmt.Sprintf("Output: %s", string(screenOutput)))
+	} else {
+		// Parse output to find session ID (last non-empty line should be session ID)
+		lines := strings.Split(strings.TrimSpace(string(screenOutput)), "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
+			if strings.Contains(lines[i], ".") && strings.Contains(lines[i], "shelley") {
+				screenSessionID = strings.TrimSpace(lines[i])
+				break
+			}
+		}
+	}
 	
 	if screenSessionID != "" {
 		sendProgress(fmt.Sprintf("shelley serve running in screen session: %s", screenSessionID))
@@ -2073,6 +2099,7 @@ screen -ls | grep shelley | awk '{print $1}'
 		sendProgress("Log file: ~/shelley-serve.log")
 	} else {
 		sendProgress("Warning: Could not determine screen session ID")
+		sendProgress("You may need to start shelley serve manually after SSH'ing in")
 	}
 
 	sendProgress("Container environment configuration complete!")
