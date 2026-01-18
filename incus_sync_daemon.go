@@ -237,18 +237,8 @@ func updateCaddyRoutes(name, domain, ip string, appPort int) {
 	}
 	addCaddyRoute(client, caddyAPI, appRoute)
 
-	// Add shelley route
-	shelleyRoute := map[string]interface{}{
-		"@id":   name + "-shelley",
-		"match": []map[string]interface{}{{"host": []string{"shelley." + domain}}},
-		"handle": []map[string]interface{}{{
-			"handler":   "reverse_proxy",
-			"upstreams": []map[string]string{{"dial": fmt.Sprintf("%s:%d", ip, ShelleyPort)}},
-		}},
-	}
-	addCaddyRoute(client, caddyAPI, shelleyRoute)
-
-	// Add upload route with path rewrite
+	// Add upload route FIRST (more specific - has path match)
+	// Caddy evaluates routes in order, so more specific routes must come first
 	uploadRoute := map[string]interface{}{
 		"@id": name + "-upload",
 		"match": []map[string]interface{}{{
@@ -267,6 +257,17 @@ func updateCaddyRoutes(name, domain, ip string, appPort int) {
 		},
 	}
 	addCaddyRoute(client, caddyAPI, uploadRoute)
+
+	// Add shelley route AFTER upload route (less specific - catches all other paths)
+	shelleyRoute := map[string]interface{}{
+		"@id":   name + "-shelley",
+		"match": []map[string]interface{}{{"host": []string{"shelley." + domain}}},
+		"handle": []map[string]interface{}{{
+			"handler":   "reverse_proxy",
+			"upstreams": []map[string]string{{"dial": fmt.Sprintf("%s:%d", ip, ShelleyPort)}},
+		}},
+	}
+	addCaddyRoute(client, caddyAPI, shelleyRoute)
 }
 
 func addCaddyRoute(client *http.Client, caddyAPI string, route map[string]interface{}) {

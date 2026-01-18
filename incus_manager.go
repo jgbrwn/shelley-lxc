@@ -1521,17 +1521,9 @@ func updateCaddyConfig(name, domain, ip string, appPort int, authUser, authHash 
 		"upstreams": []map[string]string{{"dial": fmt.Sprintf("%s:%d", ip, ShelleyPort)}},
 	})
 
-	shelleyRoute := map[string]interface{}{
-		"@id":   name + "-shelley",
-		"match": []map[string]interface{}{{"host": []string{"shelley." + domain}}},
-		"handle": shelleyHandlers,
-	}
-	if err := addCaddyRoute(client, caddyAPI, shelleyRoute); err != nil {
-		return fmt.Errorf("failed to add shelley route: %w", err)
-	}
-
 	// Build upload route handlers (Igor file upload service)
-	// Uses same auth as shelley web UI, routes /upload and /upload/ to port 8099
+	// IMPORTANT: Upload route must be added BEFORE shelley route because it's more specific
+	// (has path match). Caddy evaluates routes in order, so more specific routes must come first.
 	var uploadHandlers []map[string]interface{}
 
 	// Add basic auth handler if credentials are set
@@ -1552,7 +1544,6 @@ func updateCaddyConfig(name, domain, ip string, appPort int, authUser, authHash 
 	}
 
 	// Add rewrite handler to strip /upload prefix before proxying
-	// Use uri with strip_prefix to remove /upload from the path
 	uploadHandlers = append(uploadHandlers, map[string]interface{}{
 		"handler":      "rewrite",
 		"strip_prefix": "/upload",
@@ -1574,6 +1565,16 @@ func updateCaddyConfig(name, domain, ip string, appPort int, authUser, authHash 
 	}
 	if err := addCaddyRoute(client, caddyAPI, uploadRoute); err != nil {
 		return fmt.Errorf("failed to add upload route: %w", err)
+	}
+
+	// Add shelley route AFTER upload route (less specific, catches all other paths)
+	shelleyRoute := map[string]interface{}{
+		"@id":   name + "-shelley",
+		"match": []map[string]interface{}{{"host": []string{"shelley." + domain}}},
+		"handle": shelleyHandlers,
+	}
+	if err := addCaddyRoute(client, caddyAPI, shelleyRoute); err != nil {
+		return fmt.Errorf("failed to add shelley route: %w", err)
 	}
 
 	return nil
@@ -2001,7 +2002,7 @@ echo "  Installed Tools:"
 echo "    • Docker      $(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',' || echo 'not found')"
 echo "    • Go          $(/usr/local/go/bin/go version 2>/dev/null | awk '{print $3}' | sed 's/go//' || echo 'not found')"
 echo "    • Node.js     $(node --version 2>/dev/null || echo 'not found')"
-echo "    • shelley-cli $(/home/%s/go/bin/shelley version 2>/dev/null | grep -o '"commit":"[^"]*"' | cut -d'"' -f4 | cut -c1-8 || echo 'installed')"
+echo "    • shelley-cli $(/home/%s/go/bin/shelley version 2>/dev/null | grep '"commit"' | sed 's/.*: *"\([^"]*\)".*/\1/' | cut -c1-8 || echo 'installed')"
 echo ""
 echo "  ─────────────────────────────────────────────────────────────────────────────"
 echo "  shelley serve Status:"
