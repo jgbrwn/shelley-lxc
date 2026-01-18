@@ -329,8 +329,8 @@ SSH in and run shelley-cli interactively:
 # SSH to your container
 ssh -p 2222 container-name@host.example.com
 
-# Run shelley-cli in terminal mode
-shelley
+# Run shelley chat in terminal mode
+shelley chat
 ```
 
 The API key you provided during container creation is already configured in `~/.bashrc`.

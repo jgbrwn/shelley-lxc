@@ -2019,12 +2019,13 @@ echo "    • shelley-cli $(/home/%s/go/bin/shelley version 2>/dev/null | grep '
 echo ""
 echo "  ─────────────────────────────────────────────────────────────────────────────"
 echo "  shelley serve Status:"
-SCREEN_SESSION=$(screen -ls 2>/dev/null | grep shelley | awk '{print $1}')
+# Check screen sessions for the container user (MOTD runs as root, screen is per-user)
+SCREEN_SESSION=$(su - %s -c 'screen -ls 2>/dev/null' | grep shelley | awk '{print $1}')
 if [ -n "$SCREEN_SESSION" ]; then
     echo "    Running in screen session: $SCREEN_SESSION"
     echo "    Attach with: screen -x $SCREEN_SESSION"
 else
-    echo "    Not running (start with: screen -dmS shelley shelley serve)"
+    echo "    Not running (start with: screen -dmS shelley ~/shelley-launcher.sh)"
 fi
 echo "    Log file: ~/shelley-serve.log"
 echo ""
@@ -2032,7 +2033,7 @@ echo "  ────────────────────────
 echo "  Documentation: https://github.com/jgbrwn/shelley-lxc"
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo ""
-`, containerName, domain, domain, domain, containerUser)
+`, containerName, domain, domain, domain, containerUser, containerUser)
 
 	tmpMotd, _ := os.CreateTemp("", "99-shelley-lxc")
 	tmpMotd.WriteString(motdScript)
@@ -2177,9 +2178,13 @@ pkill -f "shelley serve" 2>/dev/null || true
 screen -ls | grep shelley | awk '{print $1}' | xargs -r -I{} screen -S {} -X quit 2>/dev/null || true
 sudo systemctl stop igor 2>/dev/null || true
 echo "Stopped any running shelley serve processes and igor service"
+sleep 2
 `
 		killCmd := exec.Command("incus", "exec", containerName, "--", "su", "-", containerUser, "-c", killScript)
 		killCmd.Run()
+		
+		// Give processes time to fully terminate
+		time.Sleep(2 * time.Second)
 
 		// The update commands to run on the container as root (for systemctl operations)
 		updateScript := fmt.Sprintf(`
@@ -2190,6 +2195,8 @@ rm -rf shelley-cli
 git clone https://github.com/davidcjones79/shelley-cli.git
 cd shelley-cli
 make
+# Remove old binary first (avoids 'Text file busy' if process didn't fully stop)
+rm -f %s/go/bin/shelley
 # Copy updated binary
 cp bin/shelley %s/go/bin/
 chown %s:%s %s/go/bin/shelley
@@ -2224,7 +2231,7 @@ systemctl daemon-reload
 systemctl enable --now igor
 
 echo "shelley-cli and igor service updated successfully!"
-`, userHome, userHome, containerUser, containerUser, userHome, containerUser, containerUser, userHome, containerUser, userHome, containerUser, containerUser, userHome)
+`, userHome, userHome, userHome, containerUser, containerUser, userHome, containerUser, containerUser, userHome, containerUser, userHome, containerUser, containerUser, userHome)
 		
 		// Run update as root
 		updateCmd := exec.Command("incus", "exec", containerName, "--", "sh", "-c", updateScript)
