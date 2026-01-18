@@ -1716,20 +1716,20 @@ func configureSSHPiper(name, ip, containerUser, userPublicKey string) {
 		os.WriteFile(filepath.Join(pDir, "authorized_keys"), []byte(strings.TrimSpace(userPublicKey)+"\n"), 0600)
 	}
 	
-	// Push the mapping public key to the container
+	// Append the mapping public key to the container's authorized_keys
+	// (don't overwrite - the user's key may already be there from configureContainerEnvironment)
 	userHome := "/home/" + containerUser
 	if pubKey, err := os.ReadFile(idRsaPubPath); err == nil {
-		// Create .ssh directory on container
+		// Create .ssh directory on container if it doesn't exist
 		exec.Command("incus", "exec", name, "--", "mkdir", "-p", userHome+"/.ssh").Run()
 		
-		// Write mapping public key to container's authorized_keys
-		tmpFile, err := os.CreateTemp("", "sshpiper_pubkey")
-		if err == nil {
-			tmpFile.Write(pubKey)
-			tmpFile.Close()
-			exec.Command("incus", "file", "push", tmpFile.Name(), name+userHome+"/.ssh/authorized_keys").Run()
-			os.Remove(tmpFile.Name())
-		}
+		// Append mapping public key to container's authorized_keys
+		// Use a script to append if not already present
+		pubKeyStr := strings.TrimSpace(string(pubKey))
+		appendScript := fmt.Sprintf(`
+grep -qF '%s' %s/.ssh/authorized_keys 2>/dev/null || echo '%s' >> %s/.ssh/authorized_keys
+`, pubKeyStr, userHome, pubKeyStr, userHome)
+		exec.Command("incus", "exec", name, "--", "sh", "-c", appendScript).Run()
 		
 		// Set correct permissions
 		exec.Command("incus", "exec", name, "--", "chown", "-R", containerUser+":"+containerUser, userHome+"/.ssh").Run()
@@ -1749,8 +1749,9 @@ func configureContainerEnvironment(containerName, containerUser, domain string, 
 	}
 
 	// Helper to run commands in container as the container user
-	userExec := func(args ...string) error {
-		cmd := exec.Command("incus", append([]string{"exec", containerName, "--", "su", "-", containerUser, "-c"}, strings.Join(args, " "))...)
+	// Pass a single shell command string
+	userExec := func(shellCmd string) error {
+		cmd := exec.Command("incus", "exec", containerName, "--", "su", "-", containerUser, "-c", shellCmd)
 		return cmd.Run()
 	}
 
@@ -1800,9 +1801,9 @@ func configureContainerEnvironment(containerName, containerUser, domain string, 
 
 	// STEP 4: Install Go (latest version, detect architecture)
 	sendProgress("Installing Go (latest version)...")
-	// Get latest Go version from go.dev
+	// Get latest Go version from go.dev - run as root for reliability
 	goInstallScript := `
-set -e
+set -ex
 ARCH=$(uname -m)
 case $ARCH in
     x86_64) GOARCH="amd64" ;;
@@ -1817,10 +1818,11 @@ if [ -z "$GO_VERSION" ]; then
 fi
 
 cd /tmp
-wget -q "https://go.dev/dl/${GO_VERSION}.linux-${GOARCH}.tar.gz"
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf "${GO_VERSION}.linux-${GOARCH}.tar.gz"
-rm "${GO_VERSION}.linux-${GOARCH}.tar.gz"
+curl -sLO "https://go.dev/dl/${GO_VERSION}.linux-${GOARCH}.tar.gz"
+rm -rf /usr/local/go
+tar -C /usr/local -xzf "${GO_VERSION}.linux-${GOARCH}.tar.gz"
+rm -f "${GO_VERSION}.linux-${GOARCH}.tar.gz"
+echo "Go ${GO_VERSION} installed successfully"
 `
 	tmpGoScript, _ := os.CreateTemp("", "install-go.sh")
 	tmpGoScript.WriteString(goInstallScript)
@@ -1828,7 +1830,7 @@ rm "${GO_VERSION}.linux-${GOARCH}.tar.gz"
 	exec.Command("incus", "file", "push", tmpGoScript.Name(), containerName+"/tmp/install-go.sh").Run()
 	os.Remove(tmpGoScript.Name())
 	rootExec("chmod", "+x", "/tmp/install-go.sh")
-	userExec("/tmp/install-go.sh")
+	rootExec("/tmp/install-go.sh") // Run as root since it installs to /usr/local
 
 	// Add Go to PATH in bashrc
 	goPathLine := "export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin"
@@ -1837,8 +1839,10 @@ rm "${GO_VERSION}.linux-${GOARCH}.tar.gz"
 	// STEP 5: Install Node.js (latest LTS)
 	sendProgress("Installing Node.js (latest LTS)...")
 	nodeInstallScript := `
-curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-sudo apt-get install -y nodejs
+set -ex
+curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+apt-get install -y nodejs
+echo "Node.js $(node --version) installed successfully"
 `
 	tmpNodeScript, _ := os.CreateTemp("", "install-node.sh")
 	tmpNodeScript.WriteString(nodeInstallScript)
@@ -1846,7 +1850,7 @@ sudo apt-get install -y nodejs
 	exec.Command("incus", "file", "push", tmpNodeScript.Name(), containerName+"/tmp/install-node.sh").Run()
 	os.Remove(tmpNodeScript.Name())
 	rootExec("chmod", "+x", "/tmp/install-node.sh")
-	userExec("/tmp/install-node.sh")
+	rootExec("/tmp/install-node.sh") // Run as root for apt operations
 
 	// STEP 6: Install shelley-cli
 	sendProgress("Installing shelley-cli...")
