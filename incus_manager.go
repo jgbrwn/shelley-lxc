@@ -2197,7 +2197,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleListKeys(key)
 	case stateContainerDetail:
 		return m.handleDetailKeys(key)
-	case stateCreateDomain, stateCreateDNSToken, stateCreateAppPort, stateCreateSSHKey, stateCreateAuthUser, stateCreateAuthPass, stateCreateAPIKey, stateEditAppPort, stateEditAuthUser, stateEditAuthPass, stateImportContainer, stateImportAuthUser, stateImportAuthPass, stateImportAPIKey:
+	case stateCreateDomain, stateCreateDNSToken, stateCreateAppPort, stateCreateSSHKey, stateCreateAuthUser, stateCreateAuthPass, stateCreateAPIKey, stateCreateBaseURL, stateEditAppPort, stateEditAuthUser, stateEditAuthPass, stateImportContainer, stateImportAuthUser, stateImportAuthPass, stateImportAPIKey, stateImportBaseURL:
 		return m.handleInputKeys(key)
 	case stateCreateDNSProvider:
 		return m.handleDNSProviderKeys(key)
