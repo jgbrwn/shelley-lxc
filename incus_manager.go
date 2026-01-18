@@ -1872,7 +1872,7 @@ echo "Node.js $(node --version) installed successfully"
 	rootExec("chmod", "+x", "/tmp/install-node.sh")
 	rootExec("/tmp/install-node.sh") // Run as root for apt operations
 
-	// STEP 6: Install shelley-cli
+	// STEP 6: Install shelley-cli and igor service
 	sendProgress("Installing shelley-cli...")
 	shelleyInstallScript := fmt.Sprintf(`
 set -ex
@@ -1886,8 +1886,14 @@ make
 mkdir -p /home/%s/go/bin
 cp bin/shelley /home/%s/go/bin/
 chown %s:%s /home/%s/go/bin/shelley
-echo "shelley-cli installed successfully"
-`, containerUser, containerUser, containerUser, containerUser, containerUser, containerUser)
+
+# Install igor.service for file upload on port 8099
+cp /home/%s/shelley-cli/igor.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now igor
+
+echo "shelley-cli and igor service installed successfully"
+`, containerUser, containerUser, containerUser, containerUser, containerUser, containerUser, containerUser)
 	tmpShelleyScript, _ := os.CreateTemp("", "install-shelley.sh")
 	tmpShelleyScript.WriteString(shelleyInstallScript)
 	tmpShelleyScript.Close()
@@ -1981,14 +1987,31 @@ echo ""
 	// STEP 9: Start shelley serve in a screen session
 	sendProgress("Starting shelley serve in screen session...")
 	
-	// Start shelley serve in a detached screen session named 'shelley'
-	startScreenScript := `
+	// Create a launcher script that sources bashrc and runs shelley serve
+	launcherScript := `#!/bin/bash
+source ~/.bashrc
 export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
 cd ~
-screen -dmS shelley bash -c 'source ~/.bashrc && shelley serve 2>&1 | tee ~/shelley-serve.log'
-sleep 2
-screen -ls | grep shelley | awk '{print $1}'
+shelley serve 2>&1 | tee ~/shelley-serve.log
+# Keep shell alive if shelley exits
+exec bash
 `
+	tmpLauncher, _ := os.CreateTemp("", "shelley-launcher.sh")
+	tmpLauncher.WriteString(launcherScript)
+	tmpLauncher.Close()
+	exec.Command("incus", "file", "push", tmpLauncher.Name(), containerName+userHome+"/shelley-launcher.sh").Run()
+	os.Remove(tmpLauncher.Name())
+	rootExec("chmod", "+x", userHome+"/shelley-launcher.sh")
+	rootExec("chown", containerUser+":"+containerUser, userHome+"/shelley-launcher.sh")
+
+	// Start shelley serve in a detached screen session named 'shelley'
+	startScreenScript := fmt.Sprintf(`
+export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+cd ~
+screen -dmS shelley %s/shelley-launcher.sh
+sleep 3
+screen -ls | grep shelley | awk '{print $1}'
+`, userHome)
 	tmpScreenScript, _ := os.CreateTemp("", "start-screen.sh")
 	tmpScreenScript.WriteString(startScreenScript)
 	tmpScreenScript.Close()
@@ -2063,48 +2086,68 @@ func streamLogsCmd(service string) tea.Cmd {
 // updateShelleyCmd updates shelley-cli on a container by rebuilding from source
 func updateShelleyCmd(containerName, containerUser string) tea.Cmd {
 	return func() tea.Msg {
-		// First, kill any running shelley serve processes
+		userHome := "/home/" + containerUser
+		
+		// First, kill any running shelley serve processes and stop igor
 		killScript := `
 pkill -f "shelley serve" 2>/dev/null || true
 screen -ls | grep shelley | awk '{print $1}' | xargs -r -I{} screen -S {} -X quit 2>/dev/null || true
-echo "Stopped any running shelley serve processes"
+sudo systemctl stop igor 2>/dev/null || true
+echo "Stopped any running shelley serve processes and igor service"
 `
 		killCmd := exec.Command("incus", "exec", containerName, "--", "su", "-", containerUser, "-c", killScript)
 		killCmd.Run()
 
-		// The update commands to run on the container as the container user
-		updateScript := `
+		// The update commands to run on the container as root (for systemctl operations)
+		updateScript := fmt.Sprintf(`
 set -e
-export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
-cd ~
+export PATH=$PATH:/usr/local/go/bin
+cd %s
 rm -rf shelley-cli
 git clone https://github.com/davidcjones79/shelley-cli.git
 cd shelley-cli
 make
-echo "shelley-cli updated successfully!"
+# Copy updated binary
+cp bin/shelley %s/go/bin/
+chown %s:%s %s/go/bin/shelley
 
-# Restart shelley serve in screen
-screen -dmS shelley bash -c 'source ~/.bashrc && shelley serve 2>&1 | tee ~/shelley-serve.log'
-sleep 2
+# Update igor.service
+cp %s/shelley-cli/igor.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now igor
+
+echo "shelley-cli and igor service updated successfully!"
+`, userHome, userHome, containerUser, containerUser, userHome, userHome)
+		
+		// Run update as root
+		updateCmd := exec.Command("incus", "exec", containerName, "--", "sh", "-c", updateScript)
+		updateOutput, updateErr := updateCmd.CombinedOutput()
+		result := string(updateOutput)
+		
+		if updateErr != nil {
+			result += fmt.Sprintf("\n\n❌ Update failed: %v", updateErr)
+			return shelleyUpdateMsg{output: result, success: false}
+		}
+
+		// Restart shelley serve in screen as user
+		restartScript := fmt.Sprintf(`
+export PATH=$PATH:/usr/local/go/bin:%s/go/bin
+cd %s
+screen -dmS shelley %s/shelley-launcher.sh
+sleep 3
 SESSION=$(screen -ls | grep shelley | awk '{print $1}')
 echo "shelley serve restarted in screen session: $SESSION"
 echo "To attach: screen -x $SESSION"
 echo "Log file: ~/shelley-serve.log"
-`
-		// Run as container user
-		cmd := exec.Command("incus", "exec", containerName, "--", "su", "-", containerUser, "-c", updateScript)
-		output, err := cmd.CombinedOutput()
+`, userHome, userHome, userHome)
+		
+		// Run restart as user
+		restartCmd := exec.Command("incus", "exec", containerName, "--", "su", "-", containerUser, "-c", restartScript)
+		restartOutput, _ := restartCmd.CombinedOutput()
+		result += string(restartOutput)
+		result += "\n\n✅ shelley-cli updated successfully!"
 
-		result := string(output)
-		success := err == nil
-
-		if success {
-			result += "\n\n✅ shelley-cli updated successfully!"
-		} else {
-			result += fmt.Sprintf("\n\n❌ Update failed: %v", err)
-		}
-
-		return shelleyUpdateMsg{output: result, success: success}
+		return shelleyUpdateMsg{output: result, success: true}
 	}
 }
 
@@ -2523,7 +2566,7 @@ func (m model) handleInputKeys(key string) (tea.Model, tea.Cmd) {
 
 	case stateCreateBaseURL:
 		m.newBaseURL = val // Can be empty
-		m.createOutput = "Starting container creation...\n"
+		m.createOutput = "Starting container creation and bootstrap...\n"
 		m.state = stateCreating
 		m.textInput.Reset()
 		// Start async creation
