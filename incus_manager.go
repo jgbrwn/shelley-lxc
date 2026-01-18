@@ -1683,10 +1683,22 @@ func updateContainerAuth(db *sql.DB, name, newUser, newPass string) error {
 }
 
 // updateSSHPiperUpstream updates just the upstream IP (for IP changes after reboot)
+// Note: This reads the existing upstream file to preserve the username
 func updateSSHPiperUpstream(name, ip string) {
 	pDir := filepath.Join(SSHPiperRoot, name)
 	os.MkdirAll(pDir, 0700)
-	os.WriteFile(filepath.Join(pDir, "sshpiper_upstream"), []byte("exedev@"+ip+":22\n"), 0600)
+	
+	// Try to read existing upstream to get the username
+	upstreamPath := filepath.Join(pDir, "sshpiper_upstream")
+	username := "ubuntu" // default
+	if existing, err := os.ReadFile(upstreamPath); err == nil {
+		// Parse existing: "user@ip:port"
+		parts := strings.SplitN(string(existing), "@", 2)
+		if len(parts) > 0 && parts[0] != "" {
+			username = strings.TrimSpace(parts[0])
+		}
+	}
+	os.WriteFile(upstreamPath, []byte(username+"@"+ip+":22\n"), 0600)
 }
 
 // configureSSHPiper sets up full SSHPiper config including key mapping for public key auth
