@@ -43,7 +43,9 @@ Each container is a fully persistent Linux sandbox running **Ubuntu 24.04 LTS** 
 | **Caddy** | Reverse proxy with automatic HTTPS (Let's Encrypt) |
 | **SSHPiper** | SSH routing - access any container via `ssh -p 2222 container-name@host` |
 | **Ubuntu/Debian** | Native Incus images (user choice during creation) |
-| **shelley-cli** | Terminal-based AI coding agent |
+| **shelley-cli** | Terminal-based AI coding agent with web UI |
+| **shelley-cli web UI** | Web interface for shelley-cli (port 9999) |
+| **Igor upload service** | Web-based file upload to containers (port 8099) |
 
 ### shelley-cli
 
@@ -54,6 +56,14 @@ This project uses [shelley-cli](https://github.com/davidcjones79/shelley-cli), a
 - **Fireworks** (Open source models)
 
 You can also configure custom API endpoints (e.g., Azure OpenAI, local models, or other proxies).
+
+#### Igor File Upload Service
+
+shelley-cli includes **Igor**, a web-based file upload service that runs on port 8099. Igor allows you to easily transfer files (screenshots, images, documents, code) from your local machine to the container via a simple drag-and-drop web interface.
+
+- **Access via**: `https://shelley.yourdomain.com/upload`
+- **Features**: Drag-and-drop uploads, file browser, thumbnails, download/delete files
+- **Integration**: Use `/pick` command in shelley-cli to analyze uploaded files
 
 ## Components
 
@@ -108,12 +118,23 @@ go version
 # Clone and build
 git clone https://github.com/jgbrwn/shelley-lxc.git
 cd shelley-lxc
-git checkout native_incus_containers  # Use the new branch
 go build -o incus_manager incus_manager.go
 go build -o incus_sync_daemon incus_sync_daemon.go
 
 # Install binaries
 sudo cp incus_manager incus_sync_daemon /usr/local/bin/
+
+## TO UPGRADE AN EXISTING INSTALLATION ##
+sudo systemctl stop incus-sync
+
+rm -rf shelley-lxc
+git clone https://github.com/jgbrwn/shelley-lxc.git
+cd shelley-lxc
+go build -o incus_manager incus_manager.go
+go build -o incus_sync_daemon incus_sync_daemon.go
+sudo cp incus_manager incus_sync_daemon /usr/local/bin/
+
+sudo systemctl start incus-sync
 ```
 
 ### 3. Run First-Time Setup
@@ -345,6 +366,14 @@ Caddy will automatically obtain Let's Encrypt certificates for both domains.
 │  │  │  │  (term)   │ │  │  │  (term)   │ │              │     │
 │  │  │  └───────────┘ │  │  └───────────┘ │              │     │
 │  │  │  ┌───────────┐ │  │  ┌───────────┐ │              │     │
+│  │  │  │ Web UI    │ │  │  │ Web UI    │ │              │     │
+│  │  │  │  (:9999)  │ │  │  │  (:9999)  │ │              │     │
+│  │  │  └───────────┘ │  │  └───────────┘ │              │     │
+│  │  │  ┌───────────┐ │  │  ┌───────────┐ │              │     │
+│  │  │  │Igor Upload│ │  │  │Igor Upload│ │              │     │
+│  │  │  │  (:8099)  │ │  │  │  (:8099)  │ │              │     │
+│  │  │  └───────────┘ │  │  └───────────┘ │              │     │
+│  │  │  ┌───────────┐ │  │  ┌───────────┐ │              │     │
 │  │  │  │ Your App  │ │  │  │ Your App  │ │              │     │
 │  │  │  │  (:8000)  │ │  │  │  (:8000)  │ │              │     │
 │  │  │  └───────────┘ │  │  └───────────┘ │              │     │
@@ -364,7 +393,8 @@ Caddy will automatically obtain Let's Encrypt certificates for both domains.
 
 1. **HTTPS requests** to `myapp.example.com` → Caddy → Container's app (port 8000)
 2. **HTTPS requests** to `shelley.myapp.example.com` → Caddy (with Basic Auth) → shelley-cli web UI (port 9999)
-3. **SSH connections** to port 2222 as `myapp-example-com@host` → SSHPiper → Container's SSH as `ubuntu`/`debian`
+3. **HTTPS requests** to `shelley.myapp.example.com/upload` → Caddy (with Basic Auth) → Igor upload service (port 8099)
+4. **SSH connections** to port 2222 as `myapp-example-com@host` → SSHPiper → Container's SSH as `ubuntu`/`debian`
 
 ### Caddy Configuration
 
@@ -372,6 +402,23 @@ Routes are managed via Caddy's Admin API (localhost:2019), not config files:
 - Routes use `@id` for identification (e.g., `container-name-app`)
 - Changes are atomic and immediate (no reload required)
 - Query current routes: `curl http://localhost:2019/config/apps/http/servers/srv0/routes`
+
+### Incus API Usage
+
+The tool uses the Incus API (via `incus query` and JSON-formatted commands) as the source of truth for container state. The database stores association metadata (domain, app port) while Incus remains authoritative for:
+
+- Container existence and status
+- IP addresses
+- Resource usage (CPU, memory)
+
+### Container Boot Behavior
+
+Containers use Incus's default "last-state" behavior (by not setting `boot.autostart`):
+
+- Running containers will restart when the host reboots
+- Stopped containers will stay stopped
+
+Incus automatically tracks each container's power state and restores it when the daemon starts.
 
 ## Known Issues / What Doesn't Work Currently
 

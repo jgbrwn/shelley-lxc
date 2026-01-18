@@ -31,6 +31,7 @@ const (
 	PIDFile        = "/var/run/incus_manager.pid"
 	DefaultAppPort = 8000
 	ShelleyPort    = 9999
+	UploadPort     = 8099 // Igor file upload service port
 )
 
 // Container image options
@@ -1470,6 +1471,7 @@ func updateCaddyConfig(name, domain, ip string, appPort int, authUser, authHash 
 	// Delete existing routes for this container (if any)
 	deleteCaddyRoute(client, caddyAPI, name+"-app")
 	deleteCaddyRoute(client, caddyAPI, name+"-shelley")
+	deleteCaddyRoute(client, caddyAPI, name+"-upload")
 
 	// Add app route (public access to the container's app)
 	appRoute := map[string]interface{}{
@@ -1517,6 +1519,45 @@ func updateCaddyConfig(name, domain, ip string, appPort int, authUser, authHash 
 	}
 	if err := addCaddyRoute(client, caddyAPI, shelleyRoute); err != nil {
 		return fmt.Errorf("failed to add shelley route: %w", err)
+	}
+
+	// Build upload route handlers (Igor file upload service)
+	// Uses same auth as shelley web UI, routes /upload and /upload/ to port 8099
+	var uploadHandlers []map[string]interface{}
+
+	// Add basic auth handler if credentials are set
+	if authUser != "" && authHash != "" {
+		authHandler := map[string]interface{}{
+			"handler": "authentication",
+			"providers": map[string]interface{}{
+				"http_basic": map[string]interface{}{
+					"accounts": []map[string]string{{
+						"username": authUser,
+						"password": authHash,
+					}},
+					"realm": "Upload",
+				},
+			},
+		}
+		uploadHandlers = append(uploadHandlers, authHandler)
+	}
+
+	// Add reverse proxy handler for Igor upload service
+	uploadHandlers = append(uploadHandlers, map[string]interface{}{
+		"handler":   "reverse_proxy",
+		"upstreams": []map[string]string{{"dial": fmt.Sprintf("%s:%d", ip, UploadPort)}},
+	})
+
+	uploadRoute := map[string]interface{}{
+		"@id": name + "-upload",
+		"match": []map[string]interface{}{{
+			"host": []string{"shelley." + domain},
+			"path": []string{"/upload", "/upload/*"},
+		}},
+		"handle": uploadHandlers,
+	}
+	if err := addCaddyRoute(client, caddyAPI, uploadRoute); err != nil {
+		return fmt.Errorf("failed to add upload route: %w", err)
 	}
 
 	return nil
