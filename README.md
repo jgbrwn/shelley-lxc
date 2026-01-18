@@ -51,7 +51,7 @@ Each container is a fully persistent Linux sandbox running latest **Ubuntu LTS**
 
 ### shelley-cli
 
-This project uses [shelley-cli](https://github.com/davidcjones79/shelley-cli), a fork of [boldsoftware/shelley-cli](https://github.com/boldsoftware/shelley-cli) with additional features. shelley-cli provides both a **terminal interface** and a **web UI** (on port 9999) for AI-assisted coding. It supports multiple LLM providers:
+This project uses [shelley-cli](https://github.com/davidcjones79/shelley-cli), a fork of [boldsoftware/shelley](https://github.com/boldsoftware/shelley) with additional features. shelley-cli provides both a **terminal interface** and a **web UI** (on port 9999) for AI-assisted coding. It supports multiple LLM providers:
 
 - **Anthropic** (Claude models)
 - **OpenAI** (GPT models)
@@ -513,7 +513,7 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
 
 ### Third-Party Components
 
-- **shelley-cli**: Fork of [boldsoftware/shelley-cli](https://github.com/boldsoftware/shelley-cli) - Apache 2.0 License
+- **shelley-cli**: Fork of [boldsoftware/shelley](https://github.com/boldsoftware/shelley) - Apache 2.0 License
 - **Incus**: [linuxcontainers/incus](https://github.com/lxc/incus) - Apache 2.0 License
 - **Caddy**: [caddyserver/caddy](https://github.com/caddyserver/caddy) - Apache 2.0 License
 - **SSHPiper**: [tg123/sshpiper](https://github.com/tg123/sshpiper) - MIT License
