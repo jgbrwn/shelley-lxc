@@ -2174,47 +2174,53 @@ func updateShelleyCmd(containerName, containerUser string) tea.Cmd {
 		result := ""
 
 		// Step 1: Check if update is needed by comparing commits
-		checkScript := userHome + "/go/bin/shelley version 2>/dev/null | grep commit | head -1"
+		// Get local commit - shelley version outputs JSON like: "commit": "abc123..."
+		checkScript := userHome + "/go/bin/shelley version 2>/dev/null"
 		localCommitCmd := exec.Command("incus", "exec", containerName, "--", "su", "-", containerUser, "-c", checkScript)
 		localCommitOut, _ := localCommitCmd.Output()
-		localCommit := strings.TrimSpace(string(localCommitOut))
 		
-		// Get latest commit from GitHub
+		// Extract commit hash from JSON output
+		localHash := ""
+		if idx := strings.Index(string(localCommitOut), `"commit": "`); idx >= 0 {
+			start := idx + len(`"commit": "`)
+			end := strings.Index(string(localCommitOut)[start:], `"`)
+			if end > 0 {
+				localHash = string(localCommitOut)[start : start+end]
+			}
+		}
+		
+		// Get latest commit from GitHub API
 		remoteCommitCmd := exec.Command("curl", "-s", "https://api.github.com/repos/davidcjones79/shelley-cli/commits/main")
 		remoteCommitOut, _ := remoteCommitCmd.Output()
-		remoteCommit := ""
-		if strings.Contains(string(remoteCommitOut), `"sha"`) {
-			// Extract first sha from response
-			parts := strings.SplitN(string(remoteCommitOut), `"sha":"`, 2)
-			if len(parts) > 1 {
-				remoteCommit = strings.SplitN(parts[1], `"`, 2)[0]
+		remoteHash := ""
+		if idx := strings.Index(string(remoteCommitOut), `"sha": "`); idx >= 0 {
+			start := idx + len(`"sha": "`)
+			end := strings.Index(string(remoteCommitOut)[start:], `"`)
+			if end > 0 {
+				remoteHash = string(remoteCommitOut)[start : start+end]
 			}
 		}
 		
-		// Compare commits (extract just the hash from local)
-		localHash := ""
-		if strings.Contains(localCommit, `"commit"`) {
-			parts := strings.SplitN(localCommit, `"`, 4)
-			if len(parts) >= 4 {
-				localHash = parts[3]
-			}
-		}
-		
-		if localHash != "" && remoteCommit != "" && localHash == remoteCommit {
+		// Compare commits
+		if localHash != "" && remoteHash != "" && localHash == remoteHash {
 			return shelleyUpdateMsg{
-				output:  fmt.Sprintf("✅ shelley-cli is already up to date!\n\nLocal commit:  %s\nRemote commit: %s", localHash[:8], remoteCommit[:8]),
+				output:  fmt.Sprintf("✅ shelley-cli is already up to date!\n\nLocal commit:  %s\nRemote commit: %s", localHash[:min(8, len(localHash))], remoteHash[:min(8, len(remoteHash))]),
 				success: true,
 			}
 		}
 		
-		if localHash != "" && remoteCommit != "" {
-			result += fmt.Sprintf("Updating shelley-cli...\nLocal:  %s\nRemote: %s\n\n", localHash[:8], remoteCommit[:8])
+		if localHash != "" && remoteHash != "" {
+			result += fmt.Sprintf("Updating shelley-cli...\nLocal:  %s\nRemote: %s\n\n", localHash[:min(8, len(localHash))], remoteHash[:min(8, len(remoteHash))])
+		} else {
+			result += "Updating shelley-cli...\n\n"
 		}
 
-		// Step 2: Stop running processes
+		// Step 2: Stop running processes and kill ALL shelley screen sessions
 		killScript := `
 pkill -f "shelley serve" 2>/dev/null || true
-screen -ls | grep shelley | awk '{print $1}' | xargs -r -I{} screen -S {} -X quit 2>/dev/null || true
+for session in $(screen -ls | grep shelley | awk '{print $1}'); do
+    screen -S "$session" -X quit 2>/dev/null || true
+done
 sudo systemctl stop igor 2>/dev/null || true
 echo "Stopped running shelley processes"
 sleep 2
@@ -2297,12 +2303,24 @@ WantedBy=multi-user.target
 		result += "Igor service updated\n"
 
 		// Step 6: Restart shelley serve in screen
+		// First, ensure no stale screen sessions exist
+		cleanupScript := `
+for session in $(screen -ls | grep shelley | awk '{print $1}'); do
+    screen -S "$session" -X quit 2>/dev/null || true
+done
+sleep 1
+`
+		cleanupCmd := exec.Command("incus", "exec", containerName, "--", "su", "-", containerUser, "-c", cleanupScript)
+		cleanupCmd.Run()
+
+		// Now start fresh screen session
 		restartScript := `
 export PATH=$PATH:/usr/local/go/bin:` + userHome + `/go/bin
 cd ` + userHome + `
 screen -dmS shelley bash -c '` + userHome + `/shelley-launcher.sh; exec bash'
 sleep 3
-screen -ls | grep shelley
+echo "Screen sessions:"
+screen -ls | grep -E "shelley|Socket"
 `
 		restartCmd := exec.Command("incus", "exec", containerName, "--", "su", "-", containerUser, "-c", restartScript)
 		restartOutput, _ := restartCmd.CombinedOutput()
