@@ -128,31 +128,40 @@ sudo cp incus_manager incus_sync_daemon /usr/local/bin/
 
 ```
 
-### Upgrading an Existing Installation
+### Quick Install/Upgrade (Recommended)
 
-Use the upgrade script for a quick one-liner upgrade:
+Use the install script for a one-liner install or upgrade:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jgbrwn/shelley-lxc/main/upgrade.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jgbrwn/shelley-lxc/main/install-upgrade.sh | bash
 ```
 
-Or to upgrade to a specific branch:
+Or to install/upgrade from a specific branch:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jgbrwn/shelley-lxc/main/upgrade.sh | bash -s -- native_incus_containers
+curl -fsSL https://raw.githubusercontent.com/jgbrwn/shelley-lxc/main/install-upgrade.sh | bash -s -- native_incus_containers
 ```
 
-Alternatively, run the upgrade manually:
+The script automatically detects whether this is a fresh install or upgrade and handles the `incus-sync` service accordingly.
+
+### Manual Install/Upgrade
+
+Alternatively, run the steps manually:
 
 ```bash
-sudo systemctl stop incus-sync
+# For upgrades only: stop the sync daemon first
+sudo systemctl stop incus-sync 2>/dev/null || true
+
+# Clone and build
 rm -rf shelley-lxc
 git clone https://github.com/jgbrwn/shelley-lxc.git
 cd shelley-lxc
 go build -o incus_manager incus_manager.go
 go build -o incus_sync_daemon incus_sync_daemon.go
 sudo cp incus_manager incus_sync_daemon /usr/local/bin/
-sudo systemctl start incus-sync
+
+# For upgrades only: restart the sync daemon
+sudo systemctl start incus-sync 2>/dev/null || true
 ```
 
 ### 3. Run First-Time Setup

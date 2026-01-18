@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# shelley-lxc upgrade script
-# Upgrades an existing shelley-lxc installation to the latest version
+# shelley-lxc install/upgrade script
+# Installs or upgrades shelley-lxc to the latest version
 #
-# Usage: ./upgrade.sh [branch]
+# Usage: ./install-upgrade.sh [branch]
 #   branch: optional git branch to checkout (default: main)
 #
 
@@ -12,10 +12,10 @@ set -e
 BRANCH="${1:-main}"
 REPO_URL="https://github.com/jgbrwn/shelley-lxc.git"
 INSTALL_DIR="/usr/local/bin"
-TEMP_DIR="/tmp/shelley-lxc-upgrade-$$"
+TEMP_DIR="/tmp/shelley-lxc-install-$$"
 
 echo "════════════════════════════════════════════════════════════════════"
-echo "  shelley-lxc Upgrade Script"
+echo "  shelley-lxc Install/Upgrade Script"
 echo "════════════════════════════════════════════════════════════════════"
 echo ""
 echo "  Branch: $BRANCH"
@@ -40,40 +40,55 @@ for cmd in git go; do
     fi
 done
 
-echo "📦 Step 1: Stopping incus-sync daemon..."
-$SUDO systemctl stop incus-sync 2>/dev/null || echo "  (incus-sync was not running)"
+# Detect if this is an upgrade (incus-sync service exists and is running)
+IS_UPGRADE=false
+if systemctl is-active --quiet incus-sync 2>/dev/null; then
+    IS_UPGRADE=true
+    echo "📦 Detected existing installation - performing upgrade"
+    echo ""
+    echo "🛑 Step 1: Stopping incus-sync daemon..."
+    $SUDO systemctl stop incus-sync
+else
+    echo "📦 No existing installation detected - performing fresh install"
+fi
 
 echo ""
-echo "📥 Step 2: Cloning repository..."
+echo "📥 Cloning repository..."
 rm -rf "$TEMP_DIR"
 git clone --branch "$BRANCH" "$REPO_URL" "$TEMP_DIR"
 cd "$TEMP_DIR"
 
 echo ""
-echo "🔨 Step 3: Building binaries..."
+echo "🔨 Building binaries..."
 go build -o incus_manager incus_manager.go
 go build -o incus_sync_daemon incus_sync_daemon.go
 
 echo ""
-echo "📋 Step 4: Installing binaries to $INSTALL_DIR..."
+echo "📋 Installing binaries to $INSTALL_DIR..."
 $SUDO cp incus_manager incus_sync_daemon "$INSTALL_DIR/"
 
-echo ""
-echo "🚀 Step 5: Starting incus-sync daemon..."
-$SUDO systemctl start incus-sync
+if [ "$IS_UPGRADE" = true ]; then
+    echo ""
+    echo "🚀 Restarting incus-sync daemon..."
+    $SUDO systemctl start incus-sync
+fi
 
 echo ""
-echo "🧹 Step 6: Cleaning up..."
+echo "🧹 Cleaning up..."
 cd /
 rm -rf "$TEMP_DIR"
 
 echo ""
 echo "════════════════════════════════════════════════════════════════════"
-echo "  ✅ Upgrade complete!"
+echo "  ✅ Installation complete!"
 echo ""
-echo "  Installed versions:"
-echo "    incus_manager:    $INSTALL_DIR/incus_manager"
+echo "  Installed:"
+echo "    incus_manager:     $INSTALL_DIR/incus_manager"
 echo "    incus_sync_daemon: $INSTALL_DIR/incus_sync_daemon"
 echo ""
-echo "  To verify: sudo incus_manager"
+if [ "$IS_UPGRADE" = false ]; then
+    echo "  Next steps:"
+    echo "    Run 'sudo incus_manager' to complete first-time setup"
+    echo ""
+fi
 echo "════════════════════════════════════════════════════════════════════"
