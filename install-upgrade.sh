@@ -86,9 +86,20 @@ echo "  Installed:"
 echo "    incus_manager:     $INSTALL_DIR/incus_manager"
 echo "    incus_sync_daemon: $INSTALL_DIR/incus_sync_daemon"
 echo ""
-if [ "$IS_UPGRADE" = false ]; then
-    echo "  Next steps:"
-    echo "    Run 'sudo incus_manager' to complete first-time setup"
+if [ "$IS_UPGRADE" = true ]; then
+    echo "  To start the TUI:"
+    echo "    sudo incus_manager"
+else
+    echo "  Next steps for first-time setup:"
     echo ""
+    echo "    1. Run the TUI to auto-install Incus, Caddy, and SSHPiper:"
+    echo "       sudo incus_manager"
+    echo ""
+    echo "    2. After first run, verify SSHPiper is running:"
+    echo "       sudo systemctl status sshpiperd"
+    echo ""
+    echo "    3. If SSHPiper is not running, start it:"
+    echo "       sudo systemctl enable --now sshpiperd"
 fi
+echo ""
 echo "════════════════════════════════════════════════════════════════════"

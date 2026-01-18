@@ -749,13 +749,24 @@ func getContainerStatus(name string) (status, ip, cpu, memory string) {
 
 	status = strings.ToLower(list[0].Status)
 	
-	// Get IP
-	for _, net := range list[0].State.Network {
+	// Get IP - prefer eth0, skip localhost and docker bridge networks
+	for netName, net := range list[0].State.Network {
 		for _, addr := range net.Addresses {
-			if addr.Family == "inet" && !strings.HasPrefix(addr.Address, "127.") {
-				ip = addr.Address
-				break
+			if addr.Family == "inet" && 
+				!strings.HasPrefix(addr.Address, "127.") &&
+				!strings.HasPrefix(addr.Address, "172.17.") && // Docker bridge
+				!strings.HasPrefix(addr.Address, "172.18.") { // Docker networks
+				// Prefer eth0 over other interfaces
+				if netName == "eth0" {
+					ip = addr.Address
+					break
+				} else if ip == "" {
+					ip = addr.Address
+				}
 			}
+		}
+		if ip != "" && netName == "eth0" {
+			break // Found eth0 IP, stop looking
 		}
 	}
 
