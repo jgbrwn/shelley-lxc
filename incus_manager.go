@@ -1641,6 +1641,7 @@ func removeCaddyConfig(name string) {
 	caddyAPI := "http://localhost:2019"
 	deleteCaddyRoute(client, caddyAPI, name+"-app")
 	deleteCaddyRoute(client, caddyAPI, name+"-shelley")
+	deleteCaddyRoute(client, caddyAPI, name+"-upload")
 }
 
 func updateContainerAppPort(db *sql.DB, name string, newPort int) error {
