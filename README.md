@@ -114,7 +114,23 @@ go version
 > **Note**: For ARM64 systems, use `go1.23.5.linux-arm64.tar.gz` instead.
 > Check https://go.dev/dl/ for the latest version.
 
-### 2. Build and Install
+### 2. Install shelley-lxc (Recommended)
+
+Use the install script for a one-liner install or upgrade:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jgbrwn/shelley-lxc/main/install-upgrade.sh | bash
+```
+
+The script automatically:
+- Clones and builds the project
+- Installs binaries to `/usr/local/bin/`
+- Detects fresh install vs upgrade
+- Handles the `incus-sync` service accordingly
+
+### Alternative: Build from Source
+
+If you prefer to build manually:
 
 ```bash
 # Clone and build
@@ -125,31 +141,14 @@ go build -o incus_sync_daemon incus_sync_daemon.go
 
 # Install binaries
 sudo cp incus_manager incus_sync_daemon /usr/local/bin/
-
 ```
 
-### Quick Install/Upgrade (Recommended)
+### Alternative: Manual Upgrade
 
-Use the install script for a one-liner install or upgrade:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/jgbrwn/shelley-lxc/main/install-upgrade.sh | bash
-```
-
-Or to install/upgrade from a specific branch:
+For manual upgrades of an existing installation:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jgbrwn/shelley-lxc/main/install-upgrade.sh | bash -s -- native_incus_containers
-```
-
-The script automatically detects whether this is a fresh install or upgrade and handles the `incus-sync` service accordingly.
-
-### Manual Install/Upgrade
-
-Alternatively, run the steps manually:
-
-```bash
-# For upgrades only: stop the sync daemon first
+# Stop the sync daemon first
 sudo systemctl stop incus-sync 2>/dev/null || true
 
 # Clone and build
@@ -160,7 +159,7 @@ go build -o incus_manager incus_manager.go
 go build -o incus_sync_daemon incus_sync_daemon.go
 sudo cp incus_manager incus_sync_daemon /usr/local/bin/
 
-# For upgrades only: restart the sync daemon
+# Restart the sync daemon
 sudo systemctl start incus-sync 2>/dev/null || true
 ```
 
