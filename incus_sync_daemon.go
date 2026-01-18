@@ -247,8 +247,8 @@ func updateCaddyRoutes(name, domain, ip string, appPort int) {
 		}},
 		"handle": []map[string]interface{}{
 			{
-				"handler":      "rewrite",
-				"strip_prefix": "/upload",
+				"handler": "rewrite",
+				"uri":     "{http.request.uri.path.strip_prefix(/upload)}",
 			},
 			{
 				"handler":   "reverse_proxy",
