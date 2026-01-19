@@ -24,6 +24,17 @@ Used as a NanoGPT-optimized AI coding agent inside containers.
 Installed via bun during container creation.
 
 ================================================================================
+
+================================================================================
+OpenHands (formerly OpenDevin)
+================================================================================
+Copyright © 2024-present All-Hands-AI
+Licensed under the MIT License
+Source: https://github.com/All-Hands-AI/OpenHands
+
+Used as an AI coding agent with full agentic capabilities inside containers.
+Installed via uv (Python 3.12) during container creation.
+
 Incus (Linux Containers)
 ================================================================================
 Copyright © 2023-present Linux Containers project
