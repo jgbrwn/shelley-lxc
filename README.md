@@ -23,6 +23,7 @@ Each container is a fully persistent Linux sandbox running **Ubuntu 24.04 LTS (N
 
 - **[opencode](https://github.com/anomalyco/opencode)**, **[nanocode](https://github.com/nanogpt-community/nanocode)**, and **[openhands](https://github.com/All-Hands-AI/OpenHands)** - AI coding agents with terminal and web UI interfaces
 - **AI coding web UI** accessible via HTTPS at `code.yourdomain.com` (Basic Auth protected)
+- **AI Tools Admin** web app at `admin.code.yourdomain.com` for managing AI coding tools
 - **Your app/site** accessible via HTTPS at `yourdomain.com`
 - **SSH access** for direct terminal access to your sandbox (VS Code Remote SSH compatible)
 - **Persistent filesystem** that survives container restarts
@@ -348,6 +349,27 @@ Press `Ctrl+A, D` to detach from screen. Reattach with `screen -x code`.
 
 > **Note**: Only one web UI can run on port 9999 at a time. Stop the current one before starting another.
 
+
+### AI Tools Admin Web App
+
+Each container includes an **AI Tools Admin** web app accessible at `https://admin.code.yourdomain.com`. This provides:
+
+**MANAGE View:**
+- Toggle AI coding tools (OpenCode, NanoCode, OpenHands) on/off
+- Only one tool can run at a time on port 9999
+- View real-time output logs
+- Links to App URL and Code UI
+- DNS health check indicators
+
+**UPDATE View:**
+- One-click update for all three AI tools
+- Automatically stops running processes before updating
+- Shows live progress of updates
+
+The admin app runs as a systemd service (`admin-app`) and is protected by the same Basic Auth credentials as the Code UI.
+
+> **Note**: For OpenHands, the first start may take 2-5 minutes while Docker images are downloaded.
+
 ### Updating AI Tools
 
 From the container detail view in the TUI, press `u` to update opencode and nanocode to their latest versions.
@@ -370,6 +392,7 @@ ssh user@host.example.com
 For HTTPS to work, DNS must point to the host server:
 - `domain.com` → Host IP
 - `code.domain.com` → Host IP (for AI coding web UI)
+- `admin.code.domain.com` → Host IP (for AI tools admin app)
 
 Caddy will automatically obtain Let's Encrypt certificates for both domains.
 

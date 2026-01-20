@@ -23,6 +23,7 @@ const (
 	SSHPiperRoot = "/var/lib/sshpiper"
 	DBPath       = "/var/lib/shelley/containers.db"
 	CodeUIPort   = 9999 // opencode/nanocode web UI port
+	AdminPort    = 8099 // AI tools admin app port
 )
 
 type lifecycleEvent struct {
@@ -265,6 +266,36 @@ func updateCaddyRoutes(name, domain, ip string, appPort int, authUser, authHash 
 		"handle": codeHandlers,
 	}
 	addCaddyRoute(client, caddyAPI, codeRoute)
+
+	// Build admin app route handlers (same auth as code UI)
+	var adminHandlers []map[string]interface{}
+	if authUser != "" && authHash != "" {
+		adminAuthHandler := map[string]interface{}{
+			"handler": "authentication",
+			"providers": map[string]interface{}{
+				"http_basic": map[string]interface{}{
+					"accounts": []map[string]string{{
+						"username": authUser,
+						"password": authHash,
+					}},
+					"realm": "Admin",
+				},
+			},
+		}
+		adminHandlers = append(adminHandlers, adminAuthHandler)
+	}
+	adminHandlers = append(adminHandlers, map[string]interface{}{
+		"handler":   "reverse_proxy",
+		"upstreams": []map[string]string{{"dial": fmt.Sprintf("%s:%d", ip, AdminPort)}},
+	})
+
+	// Add admin route
+	adminRoute := map[string]interface{}{
+		"@id":   name + "-admin",
+		"match": []map[string]interface{}{{"host": []string{"admin.code." + domain}}},
+		"handle": adminHandlers,
+	}
+	addCaddyRoute(client, caddyAPI, adminRoute)
 }
 
 func addCaddyRoute(client *http.Client, caddyAPI string, route map[string]interface{}) {

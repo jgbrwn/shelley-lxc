@@ -31,6 +31,7 @@ const (
 	PIDFile        = "/var/run/incus_manager.pid"
 	DefaultAppPort = 8000
 	CodeUIPort     = 9999 // opencode/nanocode web UI port
+	AdminPort      = 8099 // AI tools admin app port
 )
 
 // Container image options
@@ -922,6 +923,15 @@ func createContainerWithProgress(db *sql.DB, domain string, image containerImage
 				sendProgress(fmt.Sprintf("✅ Created: %s -> %s", codeDomain, hostIP))
 			}
 			
+			// Create admin.code subdomain for admin app
+			adminDomain := "admin.code." + domain
+			sendProgress(fmt.Sprintf("Creating A record for %s...", adminDomain))
+			if err := createDNSRecord(adminDomain, hostIP, dnsProvider, dnsToken, false); err != nil {
+				sendProgress(fmt.Sprintf("❌ DNS error for %s: %v", adminDomain, err))
+			} else {
+				sendProgress(fmt.Sprintf("✅ Created: %s -> %s", adminDomain, hostIP))
+			}
+			
 			// Wait for DNS propagation and verify
 			sendProgress("Waiting for DNS propagation (5s)...")
 			time.Sleep(5 * time.Second)
@@ -1478,6 +1488,7 @@ func updateCaddyConfig(name, domain, ip string, appPort int, authUser, authHash 
 	// Delete existing routes for this container (if any)
 	deleteCaddyRoute(client, caddyAPI, name+"-app")
 	deleteCaddyRoute(client, caddyAPI, name+"-code")
+	deleteCaddyRoute(client, caddyAPI, name+"-admin")
 
 	// Add app route (public access to the container's app)
 	appRoute := map[string]interface{}{
@@ -1526,6 +1537,38 @@ func updateCaddyConfig(name, domain, ip string, appPort int, authUser, authHash 
 	}
 	if err := addCaddyRoute(client, caddyAPI, codeRoute); err != nil {
 		return fmt.Errorf("failed to add code route: %w", err)
+	}
+
+	// Build admin app route handlers (same auth as code UI)
+	var adminHandlers []map[string]interface{}
+	if authUser != "" && authHash != "" {
+		adminAuthHandler := map[string]interface{}{
+			"handler": "authentication",
+			"providers": map[string]interface{}{
+				"http_basic": map[string]interface{}{
+					"accounts": []map[string]string{{
+						"username": authUser,
+						"password": authHash,
+					}},
+					"realm": "Admin",
+				},
+			},
+		}
+		adminHandlers = append(adminHandlers, adminAuthHandler)
+	}
+	adminHandlers = append(adminHandlers, map[string]interface{}{
+		"handler":   "reverse_proxy",
+		"upstreams": []map[string]string{{"dial": fmt.Sprintf("%s:%d", ip, AdminPort)}},
+	})
+
+	// Add admin route
+	adminRoute := map[string]interface{}{
+		"@id":   name + "-admin",
+		"match": []map[string]interface{}{{"host": []string{"admin.code." + domain}}},
+		"handle": adminHandlers,
+	}
+	if err := addCaddyRoute(client, caddyAPI, adminRoute); err != nil {
+		return fmt.Errorf("failed to add admin route: %w", err)
 	}
 
 	return nil
@@ -1594,6 +1637,7 @@ func removeCaddyConfig(name string) {
 	caddyAPI := "http://localhost:2019"
 	deleteCaddyRoute(client, caddyAPI, name+"-app")
 	deleteCaddyRoute(client, caddyAPI, name+"-code")
+	deleteCaddyRoute(client, caddyAPI, name+"-admin")
 }
 
 func updateContainerAppPort(db *sql.DB, name string, newPort int) error {
@@ -1909,6 +1953,298 @@ echo "Node.js $(node --version) installed successfully"
 	userExec("mkdir -p ~/.openhands")
 	sendProgress("✅ Project directory created")
 
+	// STEP 10d: Setup AI Tools Admin webapp
+	sendProgress("Setting up AI Tools Admin webapp...")
+	
+	// Create admin.code directory structure
+	userExec("mkdir -p ~/admin.code/templates ~/admin.code/static ~/admin.code/logs")
+	
+	// Write domain config
+	exec.Command("incus", "exec", containerName, "--", "bash", "-c", 
+		fmt.Sprintf("echo '%s' > /home/%s/admin.code/.domain", domain, containerUser)).Run()
+
+	// The admin app source files will be written and compiled
+	// Write main.go
+	adminMainGo := `package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"os/user"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+const (
+	WebUIPort   = 9999
+	AdminPort   = 8099
+	LogFile     = "ai-tools.log"
+	MaxLogLines = 500
+	ProjectsDir = "projects"
+)
+
+type Tool struct {
+	Name        string ` + "`json:\"name\"`" + `
+	DisplayName string ` + "`json:\"displayName\"`" + `
+	Active      bool   ` + "`json:\"active\"`" + `
+}
+
+type AppState struct {
+	mu            sync.RWMutex
+	activeTool    string
+	activeProcess *exec.Cmd
+	activePID     int
+	homeDir       string
+	domain        string
+}
+
+var state = &AppState{}
+
+func main() {
+	currentUser, _ := user.Current()
+	state.homeDir = currentUser.HomeDir
+	state.domain = os.Getenv("CONTAINER_DOMAIN")
+	if state.domain == "" {
+		data, _ := os.ReadFile(filepath.Join(state.homeDir, "admin.code", ".domain"))
+		state.domain = strings.TrimSpace(string(data))
+	}
+	os.MkdirAll(filepath.Join(state.homeDir, ProjectsDir), 0755)
+	os.MkdirAll(filepath.Join(state.homeDir, ".openhands"), 0755)
+	os.MkdirAll(filepath.Join(state.homeDir, "admin.code", "logs"), 0755)
+	state.detectActiveTool()
+	http.HandleFunc("/", handleIndex)
+	http.HandleFunc("/api/status", handleStatus)
+	http.HandleFunc("/api/toggle", handleToggle)
+	http.HandleFunc("/api/logs", handleLogs)
+	http.HandleFunc("/api/update", handleUpdate)
+	http.HandleFunc("/api/dns-check", handleDNSCheck)
+	fmt.Printf("Admin app on port %d, domain: %s\n", AdminPort, state.domain)
+	http.ListenAndServe(fmt.Sprintf(":%d", AdminPort), nil)
+}
+
+func (s *AppState) detectActiveTool() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", WebUIPort), time.Second)
+	if err != nil { s.activeTool = ""; return }
+	conn.Close()
+	out, _ := exec.Command("docker", "ps", "--filter", "name=openhands-app", "--format", "{{.Names}}").Output()
+	if strings.TrimSpace(string(out)) == "openhands-app" { s.activeTool = "openhands"; return }
+	out, _ = exec.Command("bash", "-c", "pgrep -af 'opencode serve|nanocode serve' 2>/dev/null | head -1").Output()
+	if strings.Contains(string(out), "opencode") { s.activeTool = "opencode" }
+	if strings.Contains(string(out), "nanocode") { s.activeTool = "nanocode" }
+}
+
+func handleIndex(w http.ResponseWriter, r *http.Request) {
+	tmpl, _ := template.New("index").Parse(indexHTML)
+	tmpl.Execute(w, map[string]string{
+		"Domain": state.domain, "AppURL": "https://" + state.domain,
+		"CodeURL": "https://code." + state.domain, "AdminURL": "https://admin.code." + state.domain,
+	})
+}
+
+func handleStatus(w http.ResponseWriter, r *http.Request) {
+	state.mu.RLock()
+	at := state.activeTool
+	state.mu.RUnlock()
+	go state.detectActiveTool()
+	tools := []Tool{
+		{Name: "opencode", DisplayName: "OpenCode", Active: at == "opencode"},
+		{Name: "nanocode", DisplayName: "NanoCode", Active: at == "nanocode"},
+		{Name: "openhands", DisplayName: "OpenHands", Active: at == "openhands"},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"tools": tools, "activeTool": at})
+}
+
+func handleToggle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" { http.Error(w, "Method not allowed", 405); return }
+	var req struct { Tool string ` + "`json:\"tool\"`" + `; Action string ` + "`json:\"action\"`" + ` }
+	json.NewDecoder(r.Body).Decode(&req)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.activeTool != "" { stopTool(state.activeTool); state.activeTool = ""; state.activeProcess = nil; state.activePID = 0 }
+	if req.Action == "start" && req.Tool != "" {
+		if err := startTool(req.Tool); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+			return
+		}
+		state.activeTool = req.Tool
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "activeTool": state.activeTool})
+}
+
+func startTool(tool string) error {
+	logPath := filepath.Join(state.homeDir, "admin.code", "logs", LogFile)
+	logFile, _ := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	fmt.Fprintf(logFile, "\n=== Starting %s at %s ===\n", tool, time.Now().Format("2006-01-02 15:04:05"))
+	var cmd *exec.Cmd
+	proj := filepath.Join(state.homeDir, ProjectsDir)
+	switch tool {
+	case "opencode": cmd = exec.Command("bash", "-c", fmt.Sprintf("cd %s && opencode serve --port %d --hostname 0.0.0.0", proj, WebUIPort))
+	case "nanocode": cmd = exec.Command("bash", "-c", fmt.Sprintf("cd %s && nanocode serve --port %d --hostname 0.0.0.0", proj, WebUIPort))
+	case "openhands":
+		uid := os.Getuid()
+		cmd = exec.Command("bash", "-c", fmt.Sprintf("docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v %s/.openhands:/.openhands -p %d:3000 --add-host host.docker.internal:host-gateway -e SANDBOX_VOLUMES=%s:/workspace:rw -e SANDBOX_USER_ID=%d --name openhands-app docker.all-hands.dev/all-hands-ai/openhands:latest", state.homeDir, WebUIPort, proj, uid))
+		fmt.Fprintf(logFile, "Note: OpenHands may take 2-5 minutes on first run...\n")
+	default: logFile.Close(); return fmt.Errorf("unknown tool: %s", tool)
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdout, _ := cmd.StdoutPipe(); stderr, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil { logFile.Close(); return err }
+	state.activeProcess = cmd; state.activePID = cmd.Process.Pid
+	go func() { defer logFile.Close(); multi := io.MultiReader(stdout, stderr); sc := bufio.NewScanner(multi); for sc.Scan() { fmt.Fprintf(logFile, "%s\n", sc.Text()) } }()
+	go func() { cmd.Wait(); state.mu.Lock(); if state.activeProcess == cmd { state.activeTool = ""; state.activeProcess = nil; state.activePID = 0 }; state.mu.Unlock() }()
+	return nil
+}
+
+func stopTool(tool string) {
+	logPath := filepath.Join(state.homeDir, "admin.code", "logs", LogFile)
+	logFile, _ := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	defer logFile.Close()
+	fmt.Fprintf(logFile, "\n=== Stopping %s at %s ===\n", tool, time.Now().Format("2006-01-02 15:04:05"))
+	switch tool {
+	case "openhands": exec.Command("docker", "stop", "openhands-app").Run(); exec.Command("docker", "rm", "-f", "openhands-app").Run()
+	default:
+		if state.activeProcess != nil && state.activePID > 0 { syscall.Kill(-state.activePID, syscall.SIGTERM); time.Sleep(500*time.Millisecond); syscall.Kill(-state.activePID, syscall.SIGKILL) }
+		exec.Command("pkill", "-f", tool+" serve").Run()
+	}
+	fmt.Fprintf(logFile, "=== %s stopped ===\n", tool)
+}
+
+func handleLogs(w http.ResponseWriter, r *http.Request) {
+	logPath := filepath.Join(state.homeDir, "admin.code", "logs", LogFile)
+	file, err := os.Open(logPath)
+	lines := []string{}
+	if err == nil { defer file.Close(); sc := bufio.NewScanner(file); for sc.Scan() { lines = append(lines, sc.Text()); if len(lines) > MaxLogLines { lines = lines[1:] } } }
+	if len(lines) == 0 { lines = []string{"No logs yet. Start a tool to see output here."} }
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"lines": lines})
+}
+
+func handleUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" { http.Error(w, "Method not allowed", 405); return }
+	w.Header().Set("Content-Type", "text/event-stream"); w.Header().Set("Cache-Control", "no-cache")
+	flusher, _ := w.(http.Flusher)
+	send := func(m string) { fmt.Fprintf(w, "data: %s\n\n", m); flusher.Flush() }
+	send("Stopping running processes...")
+	state.mu.Lock()
+	if state.activeTool != "" { stopTool(state.activeTool); state.activeTool = ""; state.activeProcess = nil; state.activePID = 0 }
+	state.mu.Unlock()
+	exec.Command("pkill", "-f", "opencode serve").Run(); exec.Command("pkill", "-f", "nanocode serve").Run()
+	exec.Command("docker", "stop", "openhands-app").Run(); exec.Command("docker", "rm", "-f", "openhands-app").Run()
+	time.Sleep(time.Second)
+	send("\n📦 Updating opencode...")
+	out, _ := exec.Command("bash", "-c", "curl -fsSL https://opencode.ai/install | bash 2>&1").CombinedOutput(); send(string(out)); send("✅ opencode updated")
+	send("\n📦 Updating nanocode...")
+	out, _ = exec.Command("bash", "-c", "export PATH=$PATH:$HOME/.bun/bin && bun i -g nanocode@latest 2>&1").CombinedOutput(); send(string(out)); send("✅ nanocode updated")
+	send("\n📦 Updating openhands...")
+	out, _ = exec.Command("bash", "-c", "$HOME/.local/bin/uv tool uninstall openhands 2>/dev/null; $HOME/.local/bin/uv tool install --python 3.12 openhands 2>&1").CombinedOutput(); send(string(out)); send("✅ openhands updated")
+	send("\n🐳 Pulling OpenHands Docker image..."); send("(This may take a few minutes...)")
+	out, _ = exec.Command("docker", "pull", "docker.all-hands.dev/all-hands-ai/openhands:latest").CombinedOutput(); send(string(out)); send("✅ Docker image updated")
+	send("\n✅ All updates complete!"); send("DONE")
+}
+
+func handleDNSCheck(w http.ResponseWriter, r *http.Request) {
+	results := map[string]bool{}
+	for _, d := range []string{state.domain, "code." + state.domain, "admin.code." + state.domain} { _, err := net.LookupHost(d); results[d] = err == nil }
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+var indexHTML = ` + "`" + `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Tools Admin</title>
+<style>:root{--bg:#0f0f0f;--bg2:#1a1a1a;--bg3:#252525;--txt:#fff;--txt2:#a0a0a0;--acc:#6366f1;--ok:#22c55e;--warn:#f59e0b;--err:#ef4444;--bdr:#333}*{margin:0;padding:0;box-sizing:border-box}body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--txt);min-height:100vh}.c{max-width:800px;margin:0 auto;padding:2rem}h1{font-size:1.75rem;margin-bottom:.5rem;background:linear-gradient(135deg,var(--acc),#a855f7);-webkit-background-clip:text;-webkit-text-fill-color:transparent}.links{display:flex;justify-content:center;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap}.lbtn{display:inline-flex;align-items:center;gap:.5rem;padding:.5rem 1rem;background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);text-decoration:none;font-size:.875rem}.lbtn:hover{background:var(--bg3);border-color:var(--acc)}.dns-ok{color:var(--ok)}.dns-fail{color:var(--err)}.mt{display:flex;justify-content:center;margin-bottom:2rem}.tc{display:flex;background:var(--bg2);border-radius:12px;padding:4px;border:1px solid var(--bdr)}.tb{padding:.75rem 2rem;border:none;background:transparent;color:var(--txt2);font-size:.9rem;font-weight:500;cursor:pointer;border-radius:8px}.tb.active{background:var(--acc);color:#fff}.sec{display:none}.sec.active{display:block}.card{background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;padding:1.25rem;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between}.card:hover{border-color:var(--acc)}.card.active{border-color:var(--ok);background:rgba(34,197,94,.1)}.ti{display:flex;align-items:center;gap:1rem}.icon{width:40px;height:40px;background:var(--bg3);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.25rem}.tn{font-weight:600;font-size:1.1rem}.ts{font-size:.8rem;color:var(--txt2)}.ts.run{color:var(--ok)}.sw{position:relative;width:52px;height:28px}.sw input{opacity:0;width:0;height:0}.sl{position:absolute;cursor:pointer;inset:0;background:var(--bg3);border-radius:28px;transition:.3s;border:1px solid var(--bdr)}.sl:before{position:absolute;content:"";height:20px;width:20px;left:3px;bottom:3px;background:var(--txt2);border-radius:50%;transition:.3s}input:checked+.sl{background:var(--ok);border-color:var(--ok)}input:checked+.sl:before{transform:translateX(24px);background:#fff}input:disabled+.sl{opacity:.5;cursor:not-allowed}.ls{margin-top:2rem}.lh{display:flex;justify-content:space-between;margin-bottom:.75rem}.lt{font-size:.9rem;color:var(--txt2);font-weight:500}.lv{background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;padding:1rem;height:300px;overflow-y:auto;font-family:monospace;font-size:.8rem}.ll{color:var(--txt2);white-space:pre-wrap;word-break:break-all}.ll.hi{color:var(--acc)}.ll.ok{color:var(--ok)}.ll.er{color:var(--err)}.us{text-align:center}.uw{background:rgba(245,158,11,.1);border:1px solid var(--warn);border-radius:12px;padding:1.5rem;margin-bottom:2rem;text-align:left}.uw h3{color:var(--warn);margin-bottom:.75rem;font-size:1rem}.uw ul{color:var(--txt2);margin-left:1.5rem;font-size:.9rem}.uw li{margin-bottom:.5rem}.ub{background:var(--acc);color:#fff;border:none;padding:1rem 2rem;font-size:1rem;font-weight:600;border-radius:10px;cursor:pointer}.ub:hover{background:#818cf8}.ub:disabled{opacity:.5;cursor:not-allowed}.up{margin-top:2rem;display:none}.up.active{display:block}.sp{display:inline-block;width:16px;height:16px;border:2px solid var(--bdr);border-top-color:var(--acc);border-radius:50%;animation:spin 1s linear infinite;margin-right:.5rem}@keyframes spin{to{transform:rotate(360deg)}}footer{text-align:center;margin-top:3rem;padding-top:2rem;border-top:1px solid var(--bdr);color:var(--txt2);font-size:.8rem}footer a{color:var(--acc);text-decoration:none}</style></head>
+<body><div class="c"><header style="text-align:center;margin-bottom:2rem"><h1>🤖 AI Tools Admin</h1>
+<div class="links"><a href="{{.AppURL}}" target="_blank" class="lbtn">🌐 App URL <span class="dns-ok" id="dns-app"></span></a><a href="{{.CodeURL}}" target="_blank" class="lbtn">💻 GO CODE! <span id="dns-code"></span></a><span class="lbtn" style="cursor:default">⚙️ Admin <span id="dns-admin"></span></span></div></header>
+<div class="mt"><div class="tc"><button class="tb active" data-v="manage">MANAGE</button><button class="tb" data-v="update">UPDATE</button></div></div>
+<section id="manage-section" class="sec active"><div id="tools"><div class="card" data-t="opencode"><div class="ti"><div class="icon">🔷</div><div><div class="tn">OpenCode</div><div class="ts" id="st-opencode">Stopped</div></div></div><label class="sw"><input type="checkbox" id="tg-opencode" onchange="tog('opencode',this.checked)"><span class="sl"></span></label></div>
+<div class="card" data-t="nanocode"><div class="ti"><div class="icon">🟣</div><div><div class="tn">NanoCode</div><div class="ts" id="st-nanocode">Stopped</div></div></div><label class="sw"><input type="checkbox" id="tg-nanocode" onchange="tog('nanocode',this.checked)"><span class="sl"></span></label></div>
+<div class="card" data-t="openhands"><div class="ti"><div class="icon">🖐️</div><div><div class="tn">OpenHands</div><div class="ts" id="st-openhands">Stopped</div></div></div><label class="sw"><input type="checkbox" id="tg-openhands" onchange="tog('openhands',this.checked)"><span class="sl"></span></label></div></div>
+<div class="ls"><div class="lh"><span class="lt">📋 Tool Output Log</span></div><div class="lv" id="log"><div class="ll">No logs yet.</div></div></div></section>
+<section id="update-section" class="sec"><div class="uw"><h3>⚠️ Before updating</h3><ul><li>Toggle off all tools in MANAGE</li><li>No AI tools running in CLI</li><li>Update stops running processes</li><li>Updates OpenCode, NanoCode, OpenHands</li></ul></div><button class="ub" id="ubtn" onclick="upd()">🚀 Update All Tools</button><div class="up" id="uprog"><div class="lv" id="ulog"></div></div></section>
+<footer>Powered by <a href="https://github.com/jgbrwn/shelley-lxc">shelley-lxc</a></footer></div>
+<script>let updating=false;document.querySelectorAll('.tb').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tb').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.sec').forEach(s=>s.classList.remove('active'));document.getElementById(b.dataset.v+'-section').classList.add('active')});
+async function fst(){try{const r=await fetch('/api/status'),d=await r.json();d.tools.forEach(t=>{const c=document.querySelector('[data-t="'+t.name+'"]'),g=document.getElementById('tg-'+t.name),s=document.getElementById('st-'+t.name);if(t.active){c.classList.add('active');g.checked=true;s.textContent='Running';s.classList.add('run')}else{c.classList.remove('active');g.checked=false;s.textContent='Stopped';s.classList.remove('run')}})}catch(e){}}
+async function tog(t,en){document.querySelectorAll('.sw input').forEach(i=>i.disabled=true);const s=document.getElementById('st-'+t);s.innerHTML=en?'<span class="sp"></span>Starting...':'Stopping...';try{const r=await fetch('/api/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool:t,action:en?'start':'stop'})});const d=await r.json();if(!d.success)alert('Error: '+d.error)}catch(e){alert('Failed: '+e)}document.querySelectorAll('.sw input').forEach(i=>i.disabled=false);fst()}
+async function flg(){try{const r=await fetch('/api/logs'),d=await r.json(),v=document.getElementById('log');v.innerHTML=d.lines.map(l=>{let c='ll';if(l.includes('===')||l.includes('Starting')||l.includes('Stopping'))c+=' hi';else if(l.includes('✅'))c+=' ok';else if(l.includes('error')||l.includes('Error'))c+=' er';return'<div class="'+c+'">'+esc(l)+'</div>'}).join('');v.scrollTop=v.scrollHeight}catch(e){}}
+async function dns(){try{const r=await fetch('/api/dns-check'),d=await r.json();Object.entries(d).forEach(([k,v])=>{let id=k.startsWith('admin.code.')?'dns-admin':k.startsWith('code.')?'dns-code':'dns-app';const e=document.getElementById(id);e.innerHTML=v?'✓':'✗';e.className=v?'dns-ok':'dns-fail';e.title=k+(v?' OK':' fail')})}catch(e){}}
+async function upd(){if(updating)return;updating=true;const b=document.getElementById('ubtn'),p=document.getElementById('uprog'),l=document.getElementById('ulog');b.disabled=true;b.innerHTML='<span class="sp"></span>Updating...';p.classList.add('active');l.innerHTML='';try{const r=await fetch('/api/update',{method:'POST'}),rd=r.body.getReader(),dc=new TextDecoder();while(true){const{value,done}=await rd.read();if(done)break;dc.decode(value).split('\n').filter(x=>x.startsWith('data: ')).forEach(x=>{const m=x.replace('data: ','');if(m==='DONE'){updating=false;b.disabled=false;b.textContent='🚀 Update All Tools';return}let c='ll';if(m.includes('📦')||m.includes('🐳'))c+=' hi';else if(m.includes('✅'))c+=' ok';else if(m.includes('⚠️'))c+=' er';l.innerHTML+='<div class="'+c+'">'+esc(m)+'</div>';l.scrollTop=l.scrollHeight})}}catch(e){l.innerHTML+='<div class="ll er">Error: '+e+'</div>';updating=false;b.disabled=false;b.textContent='🚀 Update All Tools'}}
+function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}fst();flg();dns();setInterval(()=>{if(!updating){fst();flg()}},3000)</script></body></html>` + "`" + `
+`
+
+	// Write the source file to container
+	adminMainPath := fmt.Sprintf("/home/%s/admin.code/main.go", containerUser)
+	tmpFile, _ := os.CreateTemp("", "admin-main-*.go")
+	tmpFile.WriteString(adminMainGo)
+	tmpFile.Close()
+	exec.Command("incus", "file", "push", tmpFile.Name(), containerName+adminMainPath).Run()
+	os.Remove(tmpFile.Name())
+
+	// Write go.mod
+	goMod := "module admin-app\n\ngo 1.21\n"
+	goModPath := fmt.Sprintf("/home/%s/admin.code/go.mod", containerUser)
+	tmpFile2, _ := os.CreateTemp("", "admin-gomod")
+	tmpFile2.WriteString(goMod)
+	tmpFile2.Close()
+	exec.Command("incus", "file", "push", tmpFile2.Name(), containerName+goModPath).Run()
+	os.Remove(tmpFile2.Name())
+
+	// Build the admin app inside container
+	sendProgress("Building admin app...")
+	buildCmd := fmt.Sprintf("cd /home/%s/admin.code && /usr/local/go/bin/go build -o admin-app .", containerUser)
+	if err := rootExec("bash", "-c", buildCmd); err != nil {
+		sendProgress(fmt.Sprintf("Warning: Admin app build failed: %v", err))
+	} else {
+		// Fix ownership
+		rootExec("chown", "-R", containerUser+":"+containerUser, fmt.Sprintf("/home/%s/admin.code", containerUser))
+		sendProgress("✅ Admin app built")
+	}
+
+	// Create systemd service for admin app
+	adminService := fmt.Sprintf(`[Unit]
+Description=AI Tools Admin Web App
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=%s
+Group=%s
+WorkingDirectory=/home/%s/admin.code
+Environment=HOME=/home/%s
+Environment=CONTAINER_DOMAIN=%s
+ExecStart=/home/%s/admin.code/admin-app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`, containerUser, containerUser, containerUser, containerUser, domain, containerUser)
+
+	tmpService, _ := os.CreateTemp("", "admin-app-*.service")
+	tmpService.WriteString(adminService)
+	tmpService.Close()
+	exec.Command("incus", "file", "push", tmpService.Name(), containerName+"/etc/systemd/system/admin-app.service").Run()
+	os.Remove(tmpService.Name())
+
+	// Enable and start the admin app service
+	rootExec("systemctl", "daemon-reload")
+	rootExec("systemctl", "enable", "admin-app")
+	rootExec("systemctl", "start", "admin-app")
+	sendProgress("✅ Admin app service started")
+
 	// STEP 11: Configure custom MOTD
 	sendProgress("Configuring welcome message (MOTD)...")
 	motdScript := fmt.Sprintf(`#!/bin/bash
@@ -1924,6 +2260,7 @@ echo "════════════════════════�
 echo ""
 echo "  Domain:   https://%s"
 echo "  Code UI:  https://code.%s"
+echo "  Admin:    https://admin.code.%s"
 echo ""
 echo "  ─────────────────────────────────────────────────────────────────────────────"
 echo "  Installed Tools:"
@@ -1969,7 +2306,7 @@ echo "  ────────────────────────
 echo "  Documentation: https://github.com/jgbrwn/shelley-lxc"
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo ""
-`, containerUser, containerName, domain, domain, domain)
+`, containerUser, containerName, domain, domain, domain, domain)
 	tmpMotd, _ := os.CreateTemp("", "99-incus-manager")
 	tmpMotd.WriteString(motdScript)
 	tmpMotd.Close()
@@ -3368,6 +3705,7 @@ func (m model) viewContainerDetail() string {
 	s += "\n"
 	s += fmt.Sprintf("  🌐 App URL: https://%s\n", c.Domain)
 	s += fmt.Sprintf("  🤖 Code UI: https://code.%s\n", c.Domain)
+	s += fmt.Sprintf("  ⚙️  Admin:   https://admin.code.%s\n", c.Domain)
 	hostIP := getHostPublicIP()
 	if hostIP == "" {
 		hostIP = "<host>"
