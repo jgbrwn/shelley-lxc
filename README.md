@@ -69,6 +69,8 @@ This project installs **opencode**, **nanocode**, and **openhands** in each cont
 - Built-in NanoGPT MCP server
 - Interleaved thinking for reasoning models
 
+**Note:** The nanocode web UI requires LLM configuration before it will work. SSH into the container and run `nanocode` (CLI mode) first to configure your LLM provider/API keys.
+
 #### openhands
 
 [OpenHands](https://github.com/All-Hands-AI/OpenHands) (formerly OpenDevin) is a powerful AI coding agent with:
@@ -328,6 +330,8 @@ cd ~/projects
 screen -S code
 nanocode serve --port 9999 --hostname 0.0.0.0
 ```
+
+> **Note:** nanocode web UI requires LLM configuration first. Run `nanocode` (CLI) to configure your provider/API keys before starting the web UI.
 
 **openhands** (uses Docker, mounts `~/projects` as workspace):
 ```bash
