@@ -1,4 +1,4 @@
-# shelley-lxc | Incus Container Manager
+# vibebin
 
 An Incus/LXC-based platform for self-hosting persistent AI coding agent sandboxes with Caddy reverse proxy and direct SSH routing to containers (suitable for VS Code remote ssh).
 
@@ -13,7 +13,7 @@ With that said, I am a huge proponent of the exe.dev platform, and if you can, y
 
 ## *WARNING*
 
-This is extremely alpha software and a very new project. Feel free to test and experiment but it's likely to have bugs and definitely not ready for production. Use at your own risk.
+This is a very new project. Feel free to test and experiment but it's likely to have bugs and may not be ready for production. Use at your own risk.
 
 ## What is this?
 
@@ -21,17 +21,17 @@ This project provides the infrastructure to self-host your own AI coding environ
 
 Each container is a fully persistent Linux sandbox running **Ubuntu 24.04 LTS (Noble)** or **Debian 13 (Trixie)**, with:
 
-- **[shelley-cli](https://github.com/davidcjones79/shelley-cli)** - AI coding agent with terminal and web UI interfaces
-- **shelley-cli web UI** accessible via HTTPS at `shelley.yourdomain.com` (Basic Auth protected)
-- **Igor file upload** at `shelley.yourdomain.com/upload` - drag-and-drop files to your container
+- **[opencode](https://github.com/anomalyco/opencode)**, **[nanocode](https://github.com/nanogpt-community/nanocode)**, and **[openhands](https://github.com/All-Hands-AI/OpenHands)** - AI coding agents with terminal and web UI interfaces
+- **AI coding web UI** accessible via HTTPS at `code.yourdomain.com` (Basic Auth protected)
+- **AI Tools Admin** web app at `admin.code.yourdomain.com` for managing AI coding tools
 - **Your app/site** accessible via HTTPS at `yourdomain.com`
 - **SSH access** for direct terminal access to your sandbox (VS Code Remote SSH compatible)
 - **Persistent filesystem** that survives container restarts
-- **Pre-installed development tools**: Docker, Go, Node.js
+- **Pre-installed development tools**: Docker, Go, Node.js, Bun, Deno, uv
 
 ### Use Cases
 
-- **AI-assisted development**: Use shelley-cli as your AI pair programmer with full system access
+- **AI-assisted development**: Use opencode/nanocode/openhands as your AI pair programmer with full system access
 - **Vibe coding**: Spin up isolated sandboxes for experimental projects
 - **App/site hosting**: Deploy and iterate on web applications
 - **Learning environments**: Safe, isolated Linux environments for experimentation
@@ -45,32 +45,46 @@ Each container is a fully persistent Linux sandbox running **Ubuntu 24.04 LTS (N
 | **Caddy** | Reverse proxy with automatic HTTPS (Let's Encrypt) |
 | **SSHPiper** | SSH routing - access any container via `ssh -p 2222 container-name@host` |
 | **Ubuntu/Debian** | Native Incus images (user choice during creation) |
-| **shelley-cli** | Terminal-based AI coding agent with web UI |
-| **shelley-cli web UI** | Web interface for shelley-cli (port 9999) |
-| **Igor upload service** | Web-based file upload to containers (port 8099) |
+| **opencode** | Open source AI coding agent with terminal and web UI |
+| **nanocode** | NanoGPT-powered AI coding agent (fork of opencode) |
+| **openhands** | Full-featured AI coding agent from All-Hands-AI |
 
-### shelley-cli
+### AI Coding Agents
 
-This project uses [shelley-cli](https://github.com/davidcjones79/shelley-cli), a fork of [boldsoftware/shelley](https://github.com/boldsoftware/shelley) with additional features. shelley-cli provides both a **terminal interface** and a **web UI** (on port 9999) for AI-assisted coding. It supports multiple LLM providers:
+This project installs **opencode**, **nanocode**, and **openhands** in each container:
 
-- **Anthropic** (Claude models)
-- **OpenAI** (GPT models)
-- **Fireworks** (Open source models)
+#### opencode
 
-You can also configure custom API endpoints (e.g., Azure OpenAI, local models, or other proxies).
+[OpenCode](https://github.com/anomalyco/opencode) is a 100% open source AI coding agent that works with multiple LLM providers:
+- Anthropic (Claude)
+- OpenAI (GPT)
+- Google (Gemini)
+- OpenCode Zen
+- Local models via custom endpoints
 
-#### Igor File Upload Service
+#### nanocode
 
-shelley-cli includes **Igor**, a web-based file upload service that runs on port 8099. Igor allows you to easily transfer files (screenshots, images, documents, code) from your local machine to the container via a simple drag-and-drop web interface.
+[NanoCode](https://github.com/nanogpt-community/nanocode) is a fork of OpenCode configured to work with [NanoGPT](https://nano-gpt.com) as the default provider. It includes:
+- Automatic model loading from NanoGPT API
+- Built-in NanoGPT MCP server
+- Interleaved thinking for reasoning models
 
-- **Access via**: `https://shelley.yourdomain.com/upload`
-- **Features**: Drag-and-drop uploads, file browser, thumbnails, download/delete files
-- **Integration**: Use `/pick` command in shelley-cli to analyze uploaded files
+**Note:** The nanocode web UI requires LLM configuration before it will work. SSH into the container and run `nanocode` (CLI mode) first to configure your LLM provider/API keys.
+
+#### openhands
+
+[OpenHands](https://github.com/All-Hands-AI/OpenHands) (formerly OpenDevin) is a powerful AI coding agent with:
+- Full agentic capabilities with file editing, terminal access, and web browsing
+- Support for multiple LLM providers (Anthropic, OpenAI, etc.)
+- Persistent workspace and history
+- Best used with Python 3.12 (installed automatically via uv)
+
+All tools support terminal and web UI modes. Configure your LLM credentials on first run.
 
 ## Components
 
-- `incus_manager` - Interactive TUI for container management
-- `incus_sync_daemon` - Background service for config synchronization
+- `vibebin` - Interactive TUI for container management
+- `vibebin_sync_daemon` - Background service for config synchronization
 
 ## Prerequisites
 
@@ -78,7 +92,6 @@ shelley-cli includes **Igor**, a web-based file upload service that runs on port
 - **VPS or VM**: Works on most virtualization platforms (KVM, VMware, Xen, EC2, GCP, Azure, etc.)
 - **Go 1.21+**: Required to build the tools (see Quick Start for installation)
 - **A domain name** with DNS you control
-- **An LLM API key** (Anthropic, OpenAI, or Fireworks)
 - **A regular user with sudo access** (avoid running as root)
 
 ### Security Recommendations
@@ -114,19 +127,19 @@ go version
 > **Note**: For ARM64 systems, use `go1.23.5.linux-arm64.tar.gz` instead.
 > Check https://go.dev/dl/ for the latest version.
 
-### 2. Install shelley-lxc (Recommended)
+### 2. Install vibebin (Recommended)
 
 Use the install script for a one-liner install or upgrade:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jgbrwn/shelley-lxc/main/install-upgrade.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jgbrwn/vibebin/main/install-upgrade.sh | bash
 ```
 
 The script automatically:
 - Clones and builds the project
 - Installs binaries to `/usr/local/bin/`
 - Detects fresh install vs upgrade
-- Handles the `incus-sync` service accordingly
+- Handles the `vibebin-sync` service accordingly
 
 ### Alternative: Build from Source
 
@@ -134,40 +147,20 @@ If you prefer to build manually:
 
 ```bash
 # Clone and build
-git clone https://github.com/jgbrwn/shelley-lxc.git
-cd shelley-lxc
-go build -o incus_manager incus_manager.go
-go build -o incus_sync_daemon incus_sync_daemon.go
+git clone https://github.com/jgbrwn/vibebin.git
+cd vibebin
+go build -o vibebin vibebin.go
+go build -o vibebin_sync_daemon vibebin_sync_daemon.go
 
 # Install binaries
-sudo cp incus_manager incus_sync_daemon /usr/local/bin/
-```
-
-### Alternative: Manual Upgrade
-
-For manual upgrades of an existing installation:
-
-```bash
-# Stop the sync daemon first
-sudo systemctl stop incus-sync 2>/dev/null || true
-
-# Clone and build
-rm -rf shelley-lxc
-git clone https://github.com/jgbrwn/shelley-lxc.git
-cd shelley-lxc
-go build -o incus_manager incus_manager.go
-go build -o incus_sync_daemon incus_sync_daemon.go
-sudo cp incus_manager incus_sync_daemon /usr/local/bin/
-
-# Restart the sync daemon
-sudo systemctl start incus-sync 2>/dev/null || true
+sudo cp vibebin vibebin_sync_daemon /usr/local/bin/
 ```
 
 ### 3. Run First-Time Setup
 
 ```bash
 # This auto-installs Incus, Caddy, and SSHPiper
-sudo incus_manager
+sudo vibebin
 ```
 
 ### 4. Configure SSH (Required)
@@ -177,7 +170,7 @@ See the [SSHPiper Manual Setup](#%EF%B8%8F-required-sshpiper-manual-setup-after-
 ### 5. Create Your First Container
 
 ```bash
-sudo incus_manager
+sudo vibebin
 ```
 
 The creation wizard will guide you through:
@@ -186,8 +179,7 @@ The creation wizard will guide you through:
 3. Configure DNS (optional auto-creation via Cloudflare/deSEC)
 4. Set app port
 5. Provide SSH public key
-6. Set credentials
-7. Choose LLM provider and enter API key
+6. Set basic auth credentials for web UI protection
 
 ### Auto-installed Dependencies
 
@@ -202,9 +194,13 @@ During container creation, the following is automatically installed:
 - **Docker** (via official get.docker.com script)
 - **Go** (latest version, architecture auto-detected)
 - **Node.js** (latest LTS via NodeSource)
-- **shelley-cli** (built from source, runs in screen session)
-- **Igor service** (systemd service for file uploads on port 8099)
-- **API key configuration** (in user's ~/.bashrc)
+- **Bun** (JavaScript runtime and package manager)
+- **Deno** (JavaScript/TypeScript runtime)
+- **uv** (Python package manager from Astral)
+- **opencode** (open source AI coding agent)
+- **nanocode** (NanoGPT-powered AI coding agent)
+- **openhands** (full-featured AI coding agent via uv with Python 3.12)
+- **Project directory** (`~/projects` for AI coding tool workspaces)
 - **Custom MOTD** (shows container info, URLs, and tool versions on SSH login)
 
 ## ⚠️ Required: SSHPiper Manual Setup (After First Run)
@@ -230,13 +226,10 @@ PermitRootLogin no
 PasswordAuthentication no
 ```
 
-> **Security Note**: Always use a regular user account with sudo privileges for host
-> administration. Never enable root login or password authentication on a public server.
-
 ## Usage
 
 ```bash
-sudo incus_manager
+sudo vibebin
 ```
 
 ### Key Bindings
@@ -257,7 +250,7 @@ sudo incus_manager
 - `p` - Change app port
 - `a` - Change auth credentials
 - `S` - Snapshot management
-- `u` - Update shelley-cli
+- `u` - Update AI coding tools (opencode/nanocode/openhands)
 - `Esc` - Back to list
 
 **Snapshot View:**
@@ -283,89 +276,107 @@ sudo incus_manager
 - **SSH Routing**: SSHPiper on port 2222 enables `ssh -p 2222 container-name@host` access
 - **Auto DNS**: Cloudflare and deSEC API integration (tokens saved securely for reuse)
 
-### shelley-cli Integration
-- **Multiple LLM Providers**: Anthropic, OpenAI, Fireworks
-- **Custom Endpoints**: Support for Azure OpenAI, local models, or proxies
-- **Pre-configured**: API keys are set up during container creation
-- **Full System Access**: shelley-cli runs with full container access
+### AI Coding Agents
+- **opencode**: Open source, supports multiple LLM providers
+- **nanocode**: NanoGPT-optimized fork with built-in features
+- **openhands**: Full-featured AI agent with file editing, terminal, and web browsing
+- **Easy Configuration**: All tools prompt for API keys on first run
+- **Web UI Access**: Start any tool in serve mode on port 9999
 
-## Using shelley-cli
+## Using the AI Coding Tools
 
-After creating a container, you can access shelley-cli in two ways:
+After creating a container, SSH in and run any of the tools. A project directory is pre-created at `~/projects` for your coding workspaces.
 
-### Web UI
-
-Access the web interface at `https://shelley.yourdomain.com` (protected by HTTP Basic Auth with the credentials you set during creation).
-
-The web UI is served by `shelley serve` which runs automatically in a **screen session** inside the container. To check its status or troubleshoot:
+### Terminal Mode
 
 ```bash
 # SSH to your container
 ssh -p 2222 container-name@host.example.com
 
-# Check if shelley serve is running
-screen -ls
+# cd to projects directory first
+cd ~/projects
 
-# Attach to the screen session to see output
-screen -x shelley
+# Run opencode
+opencode
 
-# Detach from screen (without stopping it): Ctrl+A, then D
+# Or run nanocode
+nanocode
 
-# View the log file
-cat ~/shelley-serve.log
+# Or run openhands CLI
+openhands
 ```
 
-If the screen session isn't running, you can start it manually:
+All tools will prompt you to configure your LLM provider and API key on first run.
 
-```bash
-screen -dmS shelley bash -c '~/shelley-launcher.sh; exec bash'
-```
+### Web UI Mode
 
-### Terminal
-
-SSH in and run shelley-cli interactively:
+To access the AI coding agent via web browser:
 
 ```bash
 # SSH to your container
 ssh -p 2222 container-name@host.example.com
-
-# Run shelley chat in terminal mode
-shelley chat
 ```
 
-The API key you provided during container creation is already configured in `~/.bashrc`.
+**opencode** (cd to project directory first):
+```bash
+cd ~/projects
+screen -S code
+opencode serve --port 9999 --hostname 0.0.0.0
+```
 
-### Updating shelley-cli
+**nanocode** (cd to project directory first):
+```bash
+cd ~/projects
+screen -S code
+nanocode serve --port 9999 --hostname 0.0.0.0
+```
 
-From the container detail view, press `u` to update shelley-cli to the latest version. This will:
-1. Stop the running `shelley serve` process
-2. Pull and rebuild from the repository
-3. Restart `shelley serve` in a new screen session
-4. Restart the Igor upload service
+> **Note:** nanocode web UI requires LLM configuration first. Run `nanocode` (CLI) to configure your provider/API keys before starting the web UI.
 
-### Using Custom API Endpoints
+**openhands** (uses Docker, mounts `~/projects` as workspace):
+```bash
+screen -S code
+docker run -it --rm --pull=always \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v ~/.openhands:/.openhands \
+  -p 9999:3000 \
+  --add-host host.docker.internal:host-gateway \
+  -e SANDBOX_VOLUMES=~/projects:/workspace:rw \
+  -e SANDBOX_USER_ID=$(id -u) \
+  --name openhands-app \
+  docker.all-hands.dev/all-hands-ai/openhands:latest
+```
 
-If you need to use a custom API endpoint (e.g., Azure OpenAI), you can provide a base URL during container creation. The base URL environment variables are:
+Then access via `https://code.yourdomain.com` (protected by Basic Auth credentials you set during container creation).
 
-- `ANTHROPIC_BASE_URL` - For Anthropic/Claude
-- `OPENAI_BASE_URL` - For OpenAI/GPT
-- `FIREWORKS_BASE_URL` - For Fireworks
+Press `Ctrl+A, D` to detach from screen. Reattach with `screen -x code`.
 
-## Snapshots
+> **Note**: Only one web UI can run on port 9999 at a time. Stop the current one before starting another.
 
-Snapshots allow you to save and restore the complete state of a container.
 
-### Creating Snapshots
+### AI Tools Admin Web App
 
-From the container detail view, press `S` to access snapshot management, then `n` to create.
+Each container includes an **AI Tools Admin** web app accessible at `https://admin.code.yourdomain.com`. This provides:
 
-### Use Cases
+**MANAGE View:**
+- Toggle AI coding tools (OpenCode, NanoCode, OpenHands) on/off
+- Only one tool can run at a time on port 9999
+- View real-time output logs
+- Links to App URL and Code UI
+- DNS health check indicators
 
-- **Before risky changes**: Snapshot before major updates or experiments
-- **Known-good states**: Save working configurations you can restore to
-- **Quick rollback**: Instantly revert if something breaks
+**UPDATE View:**
+- One-click update for all three AI tools
+- Automatically stops running processes before updating
+- Shows live progress of updates
 
-> **Note**: Snapshots are stored by Incus and consume disk space. Delete old snapshots to free space.
+The admin app runs as a systemd service (`admin-app`) and is protected by the same Basic Auth credentials as the Code UI.
+
+> **Note**: For OpenHands, the first start may take 2-5 minutes while Docker images are downloaded.
+
+### Updating AI Tools
+
+From the container detail view in the TUI, press `u` to update opencode and nanocode to their latest versions.
 
 ## SSH Access
 
@@ -384,7 +395,8 @@ ssh user@host.example.com
 
 For HTTPS to work, DNS must point to the host server:
 - `domain.com` → Host IP
-- `shelley.domain.com` → Host IP (for shelley-cli web UI)
+- `code.domain.com` → Host IP (for AI coding web UI)
+- `admin.code.domain.com` → Host IP (for AI tools admin app)
 
 Caddy will automatically obtain Let's Encrypt certificates for both domains.
 
@@ -418,16 +430,9 @@ Caddy will automatically obtain Let's Encrypt certificates for both domains.
 │  │  │ (Ubuntu/Debian)│  │ (Ubuntu/Debian)│              │     │
 │  │  │                │  │                │              │     │
 │  │  │  ┌───────────┐ │  │  ┌───────────┐ │              │     │
-│  │  │  │shelley-cli│ │  │  │shelley-cli│ │              │     │
-│  │  │  │  (term)   │ │  │  │  (term)   │ │              │     │
-│  │  │  └───────────┘ │  │  └───────────┘ │              │     │
-│  │  │  ┌───────────┐ │  │  ┌───────────┐ │              │     │
-│  │  │  │ Web UI    │ │  │  │ Web UI    │ │              │     │
-│  │  │  │  (:9999)  │ │  │  │  (:9999)  │ │              │     │
-│  │  │  └───────────┘ │  │  └───────────┘ │              │     │
-│  │  │  ┌───────────┐ │  │  ┌───────────┐ │              │     │
-│  │  │  │Igor Upload│ │  │  │Igor Upload│ │              │     │
-│  │  │  │  (:8099)  │ │  │  │  (:8099)  │ │              │     │
+│  │  │  │ opencode/ │ │  │  │ opencode/ │ │              │     │
+│  │  │  │ nanocode/ │ │  │  │ nanocode/ │ │              │     │
+│  │  │  │ openhands │ │  │  │ openhands │ │              │     │
 │  │  │  └───────────┘ │  │  └───────────┘ │              │     │
 │  │  │  ┌───────────┐ │  │  ┌───────────┐ │              │     │
 │  │  │  │ Your App  │ │  │  │ Your App  │ │              │     │
@@ -437,7 +442,7 @@ Caddy will automatically obtain Let's Encrypt certificates for both domains.
 │  └─────────────────────────────────────────────────────┘     │
 │                                                               │
 │  ┌───────────────────┐                                        │
-│  │  incus_manager   │  TUI for container management            │
+│  │  vibebin        │  TUI for container management            │
 │  │  (this tool)     │  - Create/delete containers              │
 │  │                  │  - Configure domains & auth              │
 │  └───────────────────┘                                         │
@@ -448,24 +453,15 @@ Caddy will automatically obtain Let's Encrypt certificates for both domains.
 ### How Traffic Flows
 
 1. **HTTPS requests** to `myapp.example.com` → Caddy → Container's app (port 8000)
-2. **HTTPS requests** to `shelley.myapp.example.com` → Caddy (with Basic Auth) → shelley-cli web UI (port 9999)
-3. **HTTPS requests** to `shelley.myapp.example.com/upload` → Caddy (with Basic Auth) → Igor upload service (port 8099)
-4. **SSH connections** to port 2222 as `myapp-example-com@host` → SSHPiper → Container's SSH as `ubuntu`/`debian`
+2. **HTTPS requests** to `code.myapp.example.com` → Caddy (with Basic Auth) → AI coding web UI (port 9999)
+3. **SSH connections** to port 2222 as `myapp-example-com@host` → SSHPiper → Container's SSH as `ubuntu`/`debian`
 
 ### Caddy Configuration
 
 Routes are managed via Caddy's Admin API (localhost:2019), not config files:
-- Routes use `@id` for identification (e.g., `container-name-app`)
+- Routes use `@id` for identification (e.g., `container-name-app`, `container-name-code`)
 - Changes are atomic and immediate (no reload required)
 - Query current routes: `curl http://localhost:2019/config/apps/http/servers/srv0/routes`
-
-### Incus API Usage
-
-The tool uses the Incus API (via `incus query` and JSON-formatted commands) as the source of truth for container state. The database stores association metadata (domain, app port) while Incus remains authoritative for:
-
-- Container existence and status
-- IP addresses
-- Resource usage (CPU, memory)
 
 ### Container Boot Behavior
 
@@ -476,75 +472,21 @@ Containers use Incus's default "last-state" behavior (by not setting `boot.autos
 
 Incus automatically tracks each container's power state and restores it when the daemon starts.
 
-## Known Issues / What Doesn't Work Currently
+## Snapshots
 
-### Web UI and Upload Service - Not Fully Tested
+Snapshots allow you to save and restore the complete state of a container.
 
-⚠️ **Important**: While the infrastructure is in place and services are running, the web-based features have not been put through real-world testing yet:
+### Creating Snapshots
 
-**shelley-cli Web UI** (`https://shelley.yourdomain.com`):
-- The web UI loads and is accessible
-- Basic Auth protection is working
-- **NOT YET TESTED** with actual API keys and real LLM usage
-- Model selection, API key configuration, and actual AI interactions need validation
-- There may be issues with API keys, model availability, or UI functionality
+From the container detail view, press `S` to access snapshot management, then `n` to create.
 
-**Igor Upload Service** (`https://shelley.yourdomain.com/upload`):
-- The upload page loads but **does not work correctly** in our implementation
-- File uploads may fail or behave unexpectedly
-- This feature was originally designed for exe.dev VMs and may need adaptation
-- The `/pick` command integration with shelley-cli is untested
+### Use Cases
 
-**What IS working**:
-- Caddy reverse proxy routes are correctly configured
-- SSL/TLS certificates are properly issued
-- Basic Auth is protecting the endpoints
-- The services (shelley serve, igor) are running in the containers
+- **Before risky changes**: Snapshot before major updates or experiments
+- **Known-good states**: Save working configurations you can restore to
+- **Quick rollback**: Instantly revert if something breaks
 
-**What needs testing/fixing**:
-- End-to-end API key flow with actual LLM providers
-- Model selection and availability in the web UI
-- File upload functionality
-- Integration between Igor uploads and shelley-cli `/pick` command
-
-We will be working through these issues as we put the system through real-world use.
-
-### Container Setup Time
-
-Initial container creation takes several minutes as it installs Docker, Go, Node.js, and shelley-cli. This is a one-time setup per container.
-
-### Other Limitations
-
-- **IPv4 only**: IPv6 addresses not currently handled
-- **Single host**: No clustering support (single Incus host only)
-- **Two-part TLDs**: Domains like `.co.uk` need manual DNS setup (see below)
-
-## Roadmap
-
-### Storage Driver Selection
-
-Currently, this implementation uses the **Incus DIR storage driver** for proof of concept. The DIR driver uses basic filesystem-level storage and is:
-- Simple to set up (no additional dependencies)
-- Compatible with any filesystem
-- **Slow for snapshots** (full copy-on-write not available)
-
-**Planned**: During the dependencies/installation phase, users will be able to choose between:
-
-| Driver | Pros | Cons |
-|--------|------|------|
-| **DIR** | Simple, works everywhere | Slow snapshots, no CoW |
-| **Btrfs** | Fast snapshots, CoW, compression | Requires Btrfs filesystem |
-| **ZFS** | Fast snapshots, CoW, excellent features | Requires significant RAM (1GB+ per TB of storage) |
-
-Btrfs and ZFS provide instant snapshots via copy-on-write, making them much more suitable for production use.
-
-### Enhanced Authentication
-
-We plan to evaluate [caddy-security](https://github.com/greenpau/caddy-security) for more advanced authentication options including:
-- OAuth2/OIDC integration
-- Multi-factor authentication
-- Session management
-- API key authentication
+> **Note**: Snapshots are stored by Incus and consume disk space. Delete old snapshots to free space.
 
 ## Troubleshooting
 
@@ -564,13 +506,14 @@ incus info container-name
 - Ensure you're using port 2222: `ssh -p 2222 container-name@host`
 - Verify upstream config: `cat /var/lib/sshpiper/container-name/sshpiper_upstream`
 
-**shelley-cli not working:**
-- Check if API key is set: `ssh -p 2222 container-name@host 'echo $ANTHROPIC_API_KEY'`
-- Verify shelley-cli is installed: `ssh -p 2222 container-name@host 'which shelley'`
+**AI coding tools not working:**
+- SSH to the container and run `opencode`, `nanocode`, or `openhands` interactively
+- All tools will prompt for API key configuration on first run
+- Check tool versions: `opencode --version`, `nanocode --version`, `openhands --version`
 
 **Sync daemon issues:**
 ```bash
-journalctl -u incus-sync -f
+journalctl -u vibebin-sync -f
 ```
 
 ## Subdomain Support
@@ -592,13 +535,34 @@ For example:
 **Workaround**: For two-part TLDs, select "No" for auto DNS creation and 
 configure DNS records manually.
 
+## Roadmap
+
+### Storage Driver Selection
+
+Currently, this implementation uses the **Incus DIR storage driver** for proof of concept. The DIR driver uses basic filesystem-level storage and is:
+- Simple to set up (no additional dependencies)
+- Compatible with any filesystem
+- **Slow for snapshots** (full copy-on-write not available)
+
+**Planned**: During the dependencies/installation phase, users will be able to choose between:
+
+| Driver | Pros | Cons |
+|--------|------|------|
+| **DIR** | Simple, works everywhere | Slow snapshots, no CoW |
+| **Btrfs** | Fast snapshots, CoW, compression | Requires Btrfs filesystem |
+| **ZFS** | Fast snapshots, CoW, excellent features | Requires significant RAM (1GB+ per TB of storage) |
+
+Btrfs and ZFS provide instant snapshots via copy-on-write, making them much more suitable for production use.
+
 ## License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ### Third-Party Components
 
-- **shelley-cli**: Fork of [boldsoftware/shelley](https://github.com/boldsoftware/shelley) - Apache 2.0 License
+- **opencode**: [anomalyco/opencode](https://github.com/anomalyco/opencode) - MIT License
+- **nanocode**: [nanogpt-community/nanocode](https://github.com/nanogpt-community/nanocode) - Fork of opencode
+- **openhands**: [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) - MIT License
 - **Incus**: [linuxcontainers/incus](https://github.com/lxc/incus) - Apache 2.0 License
 - **Caddy**: [caddyserver/caddy](https://github.com/caddyserver/caddy) - Apache 2.0 License
 - **SSHPiper**: [tg123/sshpiper](https://github.com/tg123/sshpiper) - MIT License
