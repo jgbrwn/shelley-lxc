@@ -940,6 +940,7 @@ func createContainerWithProgress(db *sql.DB, domain string, image containerImage
 			sendProgress("Verifying DNS records...")
 			mainOK := checkDNSResolvesToHost(domain)
 			codeOK := checkDNSResolvesToHost(codeDomain)
+			adminOK := checkDNSResolvesToHost(adminDomain)
 			if mainOK {
 				sendProgress(fmt.Sprintf("✅ DNS verified: %s", domain))
 			} else {
@@ -949,6 +950,11 @@ func createContainerWithProgress(db *sql.DB, domain string, image containerImage
 				sendProgress(fmt.Sprintf("✅ DNS verified: %s", codeDomain))
 			} else {
 				sendProgress(fmt.Sprintf("⚠️ DNS not yet propagated: %s", codeDomain))
+			}
+			if adminOK {
+				sendProgress(fmt.Sprintf("✅ DNS verified: %s", adminDomain))
+			} else {
+				sendProgress(fmt.Sprintf("⚠️ DNS not yet propagated: %s", adminDomain))
 			}
 		} else {
 			sendProgress("❌ Could not determine host public IP")
@@ -1104,11 +1110,12 @@ func checkDNSResolvesToHost(domain string) bool {
 }
 
 // checkAllDNSForDomain checks if the domain resolves correctly to the host IP
-// checkAllDNSForDomain checks both the main domain and code subdomain
+// checkAllDNSForDomain checks the main domain, code subdomain, and admin.code subdomain
 func checkAllDNSForDomain(domain string) bool {
 	mainOK := checkDNSResolvesToHost(domain)
 	codeOK := checkDNSResolvesToHost("code." + domain)
-	return mainOK && codeOK
+	adminOK := checkDNSResolvesToHost("admin.code." + domain)
+	return mainOK && codeOK && adminOK
 }
 
 // importContainer adds an existing Incus container to our management DB
@@ -3392,12 +3399,23 @@ func (m model) View() string {
 		dnsStatus := "⚠ DNS not configured (A records needed)"
 		mainOK := checkDNSResolvesToHost(m.newDomain)
 		codeOK := checkDNSResolvesToHost("code." + m.newDomain)
-		if mainOK && codeOK {
+		adminOK := checkDNSResolvesToHost("admin.code." + m.newDomain)
+		if mainOK && codeOK && adminOK {
 			dnsStatus = "✅ DNS already configured correctly"
-		} else if mainOK {
-			dnsStatus = "⚠ Main domain OK, code." + m.newDomain + " not configured"
-		} else if codeOK {
-			dnsStatus = "⚠ code subdomain OK, main domain not configured"
+		} else {
+			var missing []string
+			if !mainOK {
+				missing = append(missing, m.newDomain)
+			}
+			if !codeOK {
+				missing = append(missing, "code."+m.newDomain)
+			}
+			if !adminOK {
+				missing = append(missing, "admin.code."+m.newDomain)
+			}
+			if len(missing) > 0 {
+				dnsStatus = "⚠ Missing DNS: " + strings.Join(missing, ", ")
+			}
 		}
 		return fmt.Sprintf("📦 CREATE: %s\n\n%s\n\nAuto-create DNS records?\n\n[1] No - I'll configure DNS manually\n[2] Cloudflare\n[3] deSEC\n\n[Esc] Cancel", m.newDomain, dnsStatus)
 
