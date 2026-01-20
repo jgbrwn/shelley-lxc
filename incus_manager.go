@@ -625,26 +625,34 @@ WantedBy=multi-user.target
 }
 
 func setupSyncDaemon() {
-	// Check if sync daemon binary exists
-	if _, err := os.Stat("/usr/local/bin/incus-sync-daemon"); os.IsNotExist(err) {
-		// Try to copy from current directory
-		execPath, _ := os.Executable()
-		syncPath := filepath.Join(filepath.Dir(execPath), "incus_sync_daemon")
-		if _, err := os.Stat(syncPath); err == nil {
-			input, _ := os.ReadFile(syncPath)
-			os.WriteFile("/usr/local/bin/incus-sync-daemon", input, 0755)
+	// Check if sync daemon binary exists at the expected location
+	binaryPath := "/usr/local/bin/incus_sync_daemon"
+	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
+		// Try alternate name
+		binaryPath = "/usr/local/bin/incus-sync-daemon"
+		if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
+			// Try to copy from current directory
+			execPath, _ := os.Executable()
+			syncPath := filepath.Join(filepath.Dir(execPath), "incus_sync_daemon")
+			if _, err := os.Stat(syncPath); err == nil {
+				input, _ := os.ReadFile(syncPath)
+				os.WriteFile("/usr/local/bin/incus_sync_daemon", input, 0755)
+				binaryPath = "/usr/local/bin/incus_sync_daemon"
+			}
 		}
 	}
 
-	// Write systemd service
-	service := `[Unit]
+	// Only write/update service file if it doesn't exist yet
+	serviceFile := "/etc/systemd/system/incus-sync.service"
+	if _, err := os.Stat(serviceFile); os.IsNotExist(err) {
+		service := `[Unit]
 Description=Incus Container Sync Daemon
 After=network.target incus.service
 Wants=incus.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/incus-sync-daemon
+ExecStart=/usr/local/bin/incus_sync_daemon
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -653,9 +661,13 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 `
-	os.WriteFile("/etc/systemd/system/incus-sync.service", []byte(service), 0644)
-	exec.Command("systemctl", "daemon-reload").Run()
-	exec.Command("systemctl", "enable", "--now", "incus-sync").Run()
+		os.WriteFile(serviceFile, []byte(service), 0644)
+		exec.Command("systemctl", "daemon-reload").Run()
+	}
+
+	// Always ensure the service is enabled and started
+	exec.Command("systemctl", "enable", "incus-sync").Run()
+	exec.Command("systemctl", "start", "incus-sync").Run()
 }
 
 // Container management functions

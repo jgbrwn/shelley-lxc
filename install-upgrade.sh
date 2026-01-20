@@ -40,6 +40,12 @@ for cmd in git go; do
     fi
 done
 
+# Check if systemd service file exists (before any changes)
+SYSTEMD_FILE_EXISTED=false
+if [ -f /etc/systemd/system/incus-sync.service ]; then
+    SYSTEMD_FILE_EXISTED=true
+fi
+
 # Detect if this is an upgrade (incus-sync service exists and is running)
 IS_UPGRADE=false
 if systemctl is-active --quiet incus-sync 2>/dev/null; then
@@ -67,9 +73,18 @@ echo ""
 echo "📋 Installing binaries to $INSTALL_DIR..."
 $SUDO cp incus_manager incus_sync_daemon "$INSTALL_DIR/"
 
-if [ "$IS_UPGRADE" = true ]; then
+echo ""
+echo "📋 Installing systemd service file..."
+$SUDO cp incus-sync.service /etc/systemd/system/
+
+echo ""
+echo "🔄 Reloading systemd daemon..."
+$SUDO systemctl daemon-reload
+
+# Only start incus-sync if the service file existed before (meaning it was previously set up)
+if [ "$SYSTEMD_FILE_EXISTED" = true ]; then
     echo ""
-    echo "🚀 Restarting incus-sync daemon..."
+    echo "🚀 Starting incus-sync daemon..."
     $SUDO systemctl start incus-sync
 fi
 
@@ -85,8 +100,9 @@ echo ""
 echo "  Installed:"
 echo "    incus_manager:     $INSTALL_DIR/incus_manager"
 echo "    incus_sync_daemon: $INSTALL_DIR/incus_sync_daemon"
+echo "    incus-sync.service: /etc/systemd/system/incus-sync.service"
 echo ""
-if [ "$IS_UPGRADE" = true ]; then
+if [ "$SYSTEMD_FILE_EXISTED" = true ]; then
     echo "  To start the TUI:"
     echo "    sudo incus_manager"
 else
