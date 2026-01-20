@@ -1935,7 +1935,7 @@ echo "    • Deno      $(${USER_HOME}/.deno/bin/deno --version 2>/dev/null | he
 echo "    • uv        $(${USER_HOME}/.local/bin/uv --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
 echo "    • opencode  $(${USER_HOME}/.opencode/bin/opencode --version 2>/dev/null || echo 'not found')"
 echo "    • nanocode  $(${USER_HOME}/.bun/bin/nanocode --version 2>/dev/null || echo 'not found')"
-echo "    • openhands $(${USER_HOME}/.local/bin/openhands --version 2>/dev/null | head -1 | awk '{print $2}' || echo 'not found')"
+echo "    • openhands $(${USER_HOME}/.local/bin/uv tool list 2>/dev/null | grep '^openhands ' | awk '{print $2}' || echo 'not found')"
 echo ""
 echo "  ─────────────────────────────────────────────────────────────────────────────"
 echo "  AI Coding Agents:"
@@ -2097,7 +2097,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			return v
 		}())
 		currentOpenhands := strings.TrimSpace(func() string {
-			v, _ := userExec("~/.local/bin/openhands --version 2>/dev/null | head -1 | awk '{print $2}' || echo 'not installed'")
+			v, _ := userExec("~/.local/bin/uv tool list 2>/dev/null | grep '^openhands ' | awk '{print $2}' || echo 'not installed'")
 			return v
 		}())
 		
@@ -2216,7 +2216,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 		// Step 6: Update openhands if needed
 		if openhandsNeedsUpdate {
 			result += fmt.Sprintf("\nUpdating openhands (%s -> %s)...\n", currentOpenhands, latestOpenhands)
-			openhandsOut, err := userExec("~/.local/bin/uv tool install --python 3.12 openhands --force && ~/.local/bin/openhands --version")
+			openhandsOut, err := userExec("~/.local/bin/uv tool uninstall openhands 2>/dev/null; ~/.local/bin/uv tool install --python 3.12 openhands && ~/.local/bin/uv tool list | grep '^openhands '")
 			result += openhandsOut
 			openhandsErr = err
 			if err != nil {
@@ -2226,7 +2226,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			}
 		} else if currentOpenhands == "not installed" {
 			result += "\nInstalling openhands...\n"
-			openhandsOut, err := userExec("~/.local/bin/uv tool install --python 3.12 openhands && ~/.local/bin/openhands --version")
+			openhandsOut, err := userExec("~/.local/bin/uv tool install --python 3.12 openhands && ~/.local/bin/uv tool list | grep '^openhands '")
 			result += openhandsOut
 			openhandsErr = err
 			if err != nil {
@@ -2292,9 +2292,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateOutput = msg.output
 		m.updateSuccess = msg.success
 		if msg.success {
-			m.status = "opencode/nanocode updated successfully"
+			m.status = "AI coding tools updated successfully"
 		} else {
-			m.status = "opencode/nanocode update failed"
+			m.status = "AI coding tools update had issues"
 		}
 		return m, clearStatusAfterDelay()
 
@@ -2547,9 +2547,9 @@ func (m model) handleDetailKeys(key string) (tea.Model, tea.Cmd) {
 			m.status = "Container must be running to update tools"
 			return m, clearStatusAfterDelay()
 		}
-		m.status = "Updating opencode/nanocode on " + c.Name + "..."
+		m.status = "Updating AI coding tools on " + c.Name + "..."
 		m.state = stateUpdateTools
-		m.updateOutput = "Updating opencode/nanocode...\n"
+		m.updateOutput = "Updating AI coding tools...\n"
 		m.updateSuccess = false
 		// Determine container user from image (we'll need to get this from DB or assume ubuntu for now)
 		containerUser := "ubuntu" // Default assumption
@@ -3376,7 +3376,7 @@ func (m model) viewContainerDetail() string {
 	s += "\n"
 	s += "───────────────────────────────────────────────────────────────────────────────\n"
 	s += "[s] Start/Stop  [r] Restart  [p] Change Port  [a] Change Auth\n"
-	s += "[S] Snapshots   [u] Update opencode/nanocode  [Esc] Back\n"
+	s += "[S] Snapshots   [u] Update AI tools  [Esc] Back\n"
 
 	if m.status != "" {
 		s += "\n📋 " + m.status
