@@ -1,4 +1,4 @@
-# Incus Container Manager
+# vibebin
 
 An Incus/LXC-based platform for self-hosting persistent AI coding agent sandboxes with Caddy reverse proxy and direct SSH routing to containers (suitable for VS Code remote ssh).
 
@@ -13,7 +13,7 @@ With that said, I am a huge proponent of the exe.dev platform, and if you can, y
 
 ## *WARNING*
 
-This is extremely alpha software and a very new project. Feel free to test and experiment but it's likely to have bugs and definitely not ready for production. Use at your own risk.
+This is a very new project. Feel free to test and experiment but it's likely to have bugs and may not be ready for production. Use at your own risk.
 
 ## What is this?
 
@@ -83,8 +83,8 @@ All tools support terminal and web UI modes. Configure your LLM credentials on f
 
 ## Components
 
-- `incus_manager` - Interactive TUI for container management
-- `incus_sync_daemon` - Background service for config synchronization
+- `vibebin` - Interactive TUI for container management
+- `vibebin_sync_daemon` - Background service for config synchronization
 
 ## Prerequisites
 
@@ -127,19 +127,19 @@ go version
 > **Note**: For ARM64 systems, use `go1.23.5.linux-arm64.tar.gz` instead.
 > Check https://go.dev/dl/ for the latest version.
 
-### 2. Install incus-manager (Recommended)
+### 2. Install vibebin (Recommended)
 
 Use the install script for a one-liner install or upgrade:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jgbrwn/shelley-lxc/main/install-upgrade.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jgbrwn/vibebin/main/install-upgrade.sh | bash
 ```
 
 The script automatically:
 - Clones and builds the project
 - Installs binaries to `/usr/local/bin/`
 - Detects fresh install vs upgrade
-- Handles the `incus-sync` service accordingly
+- Handles the `vibebin-sync` service accordingly
 
 ### Alternative: Build from Source
 
@@ -147,20 +147,20 @@ If you prefer to build manually:
 
 ```bash
 # Clone and build
-git clone https://github.com/jgbrwn/shelley-lxc.git
-cd shelley-lxc
-go build -o incus_manager incus_manager.go
-go build -o incus_sync_daemon incus_sync_daemon.go
+git clone https://github.com/jgbrwn/vibebin.git
+cd vibebin
+go build -o vibebin vibebin.go
+go build -o vibebin_sync_daemon vibebin_sync_daemon.go
 
 # Install binaries
-sudo cp incus_manager incus_sync_daemon /usr/local/bin/
+sudo cp vibebin vibebin_sync_daemon /usr/local/bin/
 ```
 
 ### 3. Run First-Time Setup
 
 ```bash
 # This auto-installs Incus, Caddy, and SSHPiper
-sudo incus_manager
+sudo vibebin
 ```
 
 ### 4. Configure SSH (Required)
@@ -170,7 +170,7 @@ See the [SSHPiper Manual Setup](#%EF%B8%8F-required-sshpiper-manual-setup-after-
 ### 5. Create Your First Container
 
 ```bash
-sudo incus_manager
+sudo vibebin
 ```
 
 The creation wizard will guide you through:
@@ -229,7 +229,7 @@ PasswordAuthentication no
 ## Usage
 
 ```bash
-sudo incus_manager
+sudo vibebin
 ```
 
 ### Key Bindings
@@ -442,7 +442,7 @@ Caddy will automatically obtain Let's Encrypt certificates for both domains.
 │  └─────────────────────────────────────────────────────┘     │
 │                                                               │
 │  ┌───────────────────┐                                        │
-│  │  incus_manager   │  TUI for container management            │
+│  │  vibebin        │  TUI for container management            │
 │  │  (this tool)     │  - Create/delete containers              │
 │  │                  │  - Configure domains & auth              │
 │  └───────────────────┘                                         │
@@ -513,7 +513,7 @@ incus info container-name
 
 **Sync daemon issues:**
 ```bash
-journalctl -u incus-sync -f
+journalctl -u vibebin-sync -f
 ```
 
 ## Subdomain Support

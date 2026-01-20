@@ -1,3 +1,10 @@
+# Binaries (compiled)
+vibebin
+vibebin_sync_daemon
+
+# Old binary names (for transition)
+incus_manager
+incus_sync_daemon
 shelley
 
 # Binaries for programs and plugins

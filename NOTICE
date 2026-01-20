@@ -140,7 +140,7 @@ Copyright © 2020-present Charmbracelet, Inc.
 Licensed under the MIT License
 Source: https://github.com/charmbracelet/bubbletea
 
-Used for the terminal user interface (TUI) of incus_manager.
+Used for the terminal user interface (TUI) of vibebin.
 
 ================================================================================
 Bubbles (charmbracelet/bubbles)
@@ -149,4 +149,4 @@ Copyright © 2020-present Charmbracelet, Inc.
 Licensed under the MIT License
 Source: https://github.com/charmbracelet/bubbles
 
-Used for TUI components (text input) in incus_manager.
+Used for TUI components (text input) in vibebin.
