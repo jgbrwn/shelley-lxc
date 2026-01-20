@@ -1897,7 +1897,7 @@ echo "Node.js $(node --version) installed successfully"
 
 	// STEP 10b: Install openhands (requires uv)
 	sendProgress("Installing openhands...")
-	if err := userExec("~/.local/bin/uv tool install --python 3.12 openhands-ai"); err != nil {
+	if err := userExec("~/.local/bin/uv tool install --python 3.12 openhands"); err != nil {
 		sendProgress(fmt.Sprintf("Warning: openhands installation failed: %v", err))
 	} else {
 		sendProgress("✅ openhands installed")
@@ -2119,11 +2119,11 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 		}
 
 		// Get latest openhands version from PyPI API
-		latestOpenhandsOut, err := exec.Command("bash", "-c", "curl -s https://pypi.org/pypi/openhands-ai/json | jq -r '.info.version // empty'").Output()
+		latestOpenhandsOut, err := exec.Command("bash", "-c", "curl -s https://pypi.org/pypi/openhands/json | jq -r '.info.version // empty'").Output()
 		latestOpenhands := strings.TrimSpace(string(latestOpenhandsOut))
 		if err != nil || latestOpenhands == "" {
 			// Fallback to manual parsing if jq fails
-			rawOut, _ := exec.Command("curl", "-s", "https://pypi.org/pypi/openhands-ai/json").Output()
+			rawOut, _ := exec.Command("curl", "-s", "https://pypi.org/pypi/openhands/json").Output()
 			if idx := strings.Index(string(rawOut), `"version": "`); idx >= 0 {
 				start := idx + len(`"version": "`)
 				end := strings.Index(string(rawOut)[start:], `"`)
@@ -2196,7 +2196,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 		// Step 6: Update openhands if needed
 		if openhandsNeedsUpdate {
 			result += fmt.Sprintf("\nUpdating openhands (%s -> %s)...\n", currentOpenhands, latestOpenhands)
-			openhandsOut, err := userExec("~/.local/bin/uv tool install --python 3.12 openhands-ai --force && ~/.local/bin/openhands --version")
+			openhandsOut, err := userExec("~/.local/bin/uv tool install --python 3.12 openhands --force && ~/.local/bin/openhands --version")
 			result += openhandsOut
 			openhandsErr = err
 			if err != nil {
@@ -2206,7 +2206,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			}
 		} else if currentOpenhands == "not installed" {
 			result += "\nInstalling openhands...\n"
-			openhandsOut, err := userExec("~/.local/bin/uv tool install --python 3.12 openhands-ai && ~/.local/bin/openhands --version")
+			openhandsOut, err := userExec("~/.local/bin/uv tool install --python 3.12 openhands && ~/.local/bin/openhands --version")
 			result += openhandsOut
 			openhandsErr = err
 			if err != nil {
