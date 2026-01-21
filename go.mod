@@ -1,4 +1,4 @@
-module shelley-lxc
+module vibebin
 
 go 1.24.0
 
