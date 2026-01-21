@@ -2293,7 +2293,7 @@ echo "    • Deno      $(${USER_HOME}/.deno/bin/deno --version 2>/dev/null | he
 echo "    • uv        $(${USER_HOME}/.local/bin/uv --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
 echo "    • opencode  $(${USER_HOME}/.opencode/bin/opencode --version 2>/dev/null || echo 'not found')"
 echo "    • nanocode  $(${USER_HOME}/.bun/bin/nanocode --version 2>/dev/null || echo 'not found')"
-echo "    • openhands $(timeout 2 ${USER_HOME}/.local/bin/openhands --version 2>/dev/null | awk '{print $NF}' || echo 'not found')"
+echo "    • openhands $(timeout 3 ${USER_HOME}/.local/bin/openhands --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || ${USER_HOME}/.local/bin/uv tool list 2>/dev/null | grep '^openhands ' | awk '{print $2}' || echo 'not found')"
 echo ""
 echo "  ─────────────────────────────────────────────────────────────────────────────"
 echo "  AI Coding Agents:"
@@ -2456,7 +2456,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			return v
 		}())
 		currentOpenhands := strings.TrimSpace(func() string {
-			v, _ := userExec("timeout 5 ~/.local/bin/openhands --version 2>/dev/null | awk '{print $NF}' || echo 'not installed'")
+			v, _ := userExec("timeout 8 ~/.local/bin/openhands --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || ~/.local/bin/uv tool list 2>/dev/null | grep '^openhands ' | awk '{print $2}' || echo 'not installed'")
 			return v
 		}())
 		
