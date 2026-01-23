@@ -111,6 +111,15 @@ All tools support terminal and web UI modes. Configure your LLM credentials on f
 - **A domain name** with DNS you control
 - **A regular user with sudo access** (avoid running as root)
 
+### Recommended VPS Providers
+
+Any KVM-based VPS will work well with vibebin. Here are some recommended options:
+
+- [HostBRR Epyc Turin VPS](https://my.hostbrr.com/order/main/packages/BF2025/?group_id=74&a=MTA4OTY=) - AMD Epyc Turin processors, great price/performance
+- [HostBRR Threadripper Performance VPS](https://my.hostbrr.com/order/main/packages/BF2025/?group_id=72&a=MTA4OTY=) - High-performance Threadripper line
+
+> *Disclosure: The HostBRR links above are affiliate links.*
+
 ### Security Recommendations
 
 Before installing, ensure your host SSH is properly secured:
@@ -551,6 +560,43 @@ For example:
 
 **Workaround**: For two-part TLDs, select "No" for auto DNS creation and 
 configure DNS records manually.
+
+## Security & Isolation
+
+Each container created by vibebin is fully isolated by default:
+
+### Filesystem Isolation
+- Each container has its own complete, persistent filesystem (Ubuntu 24.04 or Debian 13)
+- Containers cannot access each other's filesystems
+- Uses Incus/LXC which provides OS-level virtualization with separate root filesystems
+- Data persists across container restarts
+
+### Network Isolation
+- Each container gets its own private IP on an internal bridge network (typically `10.x.x.x`)
+- Containers **cannot directly communicate with each other** by default
+- All external access is routed through:
+  - **Caddy** (HTTPS reverse proxy) for web traffic
+  - **SSHPiper** (port 2222) for SSH access
+- Each container only exposes what's explicitly configured (app port, code UI port)
+
+### Process Isolation
+- Containers use Linux namespaces (PID, network, mount, user, etc.)
+- Processes in one container cannot see or interact with processes in another
+- Each container has its own init system and process tree
+
+### Security Note
+
+`security.nesting=true` is enabled to allow Docker-in-container (needed for OpenHands). This is standard for development environments but worth noting for security-sensitive deployments.
+
+### In Practice
+
+If you run 3 containers (app1.example.com, app2.example.com, app3.example.com):
+- Each has its own isolated Linux environment
+- Each has its own AI tools installation (opencode, nanocode, openhands)
+- An agent in app1 cannot access files or processes in app2 or app3
+- They share the host's resources (CPU, RAM) but are otherwise independent
+
+It's essentially like having separate lightweight VMs, but with much lower overhead than full virtualization.
 
 ## Roadmap
 
