@@ -860,6 +860,23 @@ func getUntrackedContainers(db *sql.DB) []string {
 	return untracked
 }
 
+// getContainerOS detects the OS of a container (returns "debian", "ubuntu", or "unknown")
+func getContainerOS(containerName string) string {
+	// Try to read /etc/os-release from the container
+	out, err := exec.Command("incus", "exec", containerName, "--", "cat", "/etc/os-release").Output()
+	if err != nil {
+		return "unknown"
+	}
+	osRelease := strings.ToLower(string(out))
+	if strings.Contains(osRelease, "id=debian") {
+		return "debian"
+	}
+	if strings.Contains(osRelease, "id=ubuntu") {
+		return "ubuntu"
+	}
+	return "unknown"
+}
+
 // createContainerWithProgress creates a container and sends progress updates via channel
 func createContainerWithProgress(db *sql.DB, domain string, image containerImage, appPort int, sshKey string, dnsProvider dnsProvider, dnsToken string, cfProxy bool, authUser, authPass string, progress chan<- string) error {
 	sendProgress := func(msg string) {
@@ -3012,7 +3029,7 @@ func (m model) handleInputKeys(key string) (tea.Model, tea.Cmd) {
 		
 		// Go to image selection
 		m.state = stateCreateImage
-		m.newImage = imageUbuntu // Default to Ubuntu
+		m.newImage = imageDebian // Default to Debian
 		m.textInput.Reset()
 
 	case stateCreateDNSToken:
@@ -3131,10 +3148,12 @@ func (m model) handleInputKeys(key string) (tea.Model, tea.Cmd) {
 			m.status = "⚠ DNS not configured - set up DNS records manually after import"
 		}
 		
-		// Go to image selection for import
-		m.state = stateImportImage
-		m.newImage = imageUbuntu // Default to Ubuntu
-		m.textInput.Reset()
+		// Skip image selection - OS was auto-detected when container was selected
+		// Go directly to auth user input
+		m.state = stateImportAuthUser
+		m.textInput.Placeholder = "admin"
+		m.textInput.SetValue("admin")
+		m.textInput.Focus()
 
 	case stateImportAuthUser:
 		if val == "" {
@@ -3233,7 +3252,7 @@ func (m model) handleCFProxyKeys(key string) (tea.Model, tea.Cmd) {
 func (m model) handleImageSelectKeys(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "1":
-		m.newImage = imageUbuntu
+		m.newImage = imageDebian
 		// Check if DNS already resolves correctly - skip DNS provider selection if so
 		if checkAllDNSForDomain(m.newDomain) {
 			m.status = "✓ DNS already configured correctly"
@@ -3247,7 +3266,7 @@ func (m model) handleImageSelectKeys(key string) (tea.Model, tea.Cmd) {
 			m.textInput.Reset()
 		}
 	case "2":
-		m.newImage = imageDebian
+		m.newImage = imageUbuntu
 		if checkAllDNSForDomain(m.newDomain) {
 			m.status = "✓ DNS already configured correctly"
 			m.newDNSProvider = dnsNone
@@ -3301,6 +3320,19 @@ func (m model) handleUntrackedKeys(key string) (tea.Model, tea.Cmd) {
 	case "enter", "i":
 		// Import the selected container
 		if m.cursor < len(m.untrackedContainers) {
+			containerName := m.untrackedContainers[m.cursor]
+			// Check if container OS is supported (Debian or Ubuntu)
+			detectedOS := getContainerOS(containerName)
+			if detectedOS == "unknown" {
+				m.status = "❌ Cannot import: container OS is not Debian or Ubuntu"
+				return m, clearStatusAfterDelay()
+			}
+			// Set the image type based on detected OS
+			if detectedOS == "debian" {
+				m.newImage = imageDebian
+			} else {
+				m.newImage = imageUbuntu
+			}
 			m.state = stateImportContainer
 			m.textInput.Placeholder = "domain.com"
 			m.textInput.Focus()
@@ -3660,8 +3692,8 @@ func (m model) viewImageSelect(title string) string {
 	s := fmt.Sprintf("📦 %s\n", title)
 	s += "═══════════════════════════════════════════════════════════════════════════════\n\n"
 	s += "Select container base image:\n\n"
-	s += "  [1] Ubuntu (latest)  - recommended\n"
-	s += "  [2] Debian (latest)\n"
+	s += "  [1] Debian (latest)  - recommended\n"
+	s += "  [2] Ubuntu (latest)\n"
 	s += "\n───────────────────────────────────────────────────────────────────────────────\n"
 	s += "[1/2] Select  [Esc] Cancel\n"
 	return s
@@ -3698,18 +3730,22 @@ func (m model) viewUntracked() string {
 	s := "🔍 UNTRACKED CONTAINERS\n"
 	s += "═══════════════════════════════════════════════════════════════════════════════\n\n"
 	s += "These containers exist in Incus but are not managed by vibebin.\n"
+	s += "Only Debian and Ubuntu containers can be imported.\n"
 	s += "[Enter/i] Import  [Esc] Back\n\n"
 
 	if len(m.untrackedContainers) == 0 {
 		s += "  No untracked containers found.\n"
 	} else {
+		s += fmt.Sprintf("  %-30s  %-10s  %-8s  %s\n", "NAME", "STATUS", "OS", "IP")
+		s += "  " + strings.Repeat("─", 65) + "\n"
 		for i, name := range m.untrackedContainers {
 			status, ip, _, _ := getContainerStatus(name)
+			detectedOS := getContainerOS(name)
 			cursor := "  "
 			if i == m.cursor {
 				cursor = "▶ "
 			}
-			s += fmt.Sprintf("%s%-30s  %-10s  %s\n", cursor, name, status, ip)
+			s += fmt.Sprintf("%s%-30s  %-10s  %-8s  %s\n", cursor, name, status, detectedOS, ip)
 		}
 	}
 
