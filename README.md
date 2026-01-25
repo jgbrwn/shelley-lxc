@@ -115,10 +115,20 @@ All tools support terminal and web UI modes. Configure your LLM credentials on f
 
 Any KVM-based VPS will work well with vibebin. Here are some recommended options:
 
+**HostBRR** - Budget-friendly with excellent performance:
 - [HostBRR Epyc Turin VPS](https://my.hostbrr.com/order/main/packages/BF2025/?group_id=74&a=MTA4OTY=) - AMD Epyc Turin processors, great price/performance
 - [HostBRR Threadripper Performance VPS](https://my.hostbrr.com/order/main/packages/BF2025/?group_id=72&a=MTA4OTY=) - High-performance Threadripper line
 
-> *Disclosure: The HostBRR links above are affiliate links.*
+**Netcup** - German provider with reliable infrastructure:
+- [Netcup VPS](https://www.netcup.com/us/?ref=75646) - Recommend RS1000 (8GB RAM) or RS2000 (16GB RAM) for vibebin workloads
+
+**OVHcloud** - Large European provider with competitive pricing:
+- [OVHcloud VPS](https://www.ovhcloud.com/en/vps/vps-8gb/) - Recommend 8GB or 12GB VPS; larger options (24GB, 48GB) available at excellent prices if needed
+
+**Oracle Cloud Infrastructure (OCI)** - Free tier available:
+- [OCI Always Free Resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm) - Includes free ARM-based VMs (up to 4 OCPUs, 24GB RAM) that work well with vibebin
+
+> *Disclosure: The HostBRR and Netcup links above are affiliate links.*
 
 ### Security Recommendations
 
