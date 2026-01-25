@@ -120,7 +120,7 @@ Any KVM-based VPS will work well with vibebin. Here are some recommended options
 - [HostBRR Threadripper Performance VPS](https://my.hostbrr.com/order/main/packages/BF2025/?group_id=72&a=MTA4OTY=) - High-performance Threadripper line
 
 **Netcup** - German provider with reliable infrastructure:
-- [Netcup VPS](https://www.netcup.com/us/?ref=75646) - Recommend RS1000 (8GB RAM) or RS2000 (16GB RAM) for vibebin workloads
+- [Netcup VPS](https://www.netcup.com/en/?ref=75646) - Recommend RS1000 (8GB RAM) or RS2000 (16GB RAM) for vibebin workloads
 
 **OVHcloud** - Large European provider with competitive pricing:
 - [OVHcloud VPS](https://www.ovhcloud.com/en/vps/vps-8gb/) - Recommend 8GB or 12GB VPS; larger options (24GB, 48GB) available at excellent prices if needed
