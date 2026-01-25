@@ -1830,6 +1830,13 @@ apt-get install -y \
 	libglib2.0-0 libnss3 libxcomposite1 libxdamage1 libxi6 libxrandr2 libgbm1 libgtk-3-0 \
 	fonts-noto-color-emoji fonts-symbola fontconfig imagemagick ffmpeg \
 	kitty-terminfo
+
+# Install Debian-specific packages
+if grep -q "ID=debian" /etc/os-release; then
+	apt-get install -y wtmpdb libpam-wtmpdb lastlog2
+	echo "Debian-specific packages installed"
+fi
+
 echo "Base packages installed"
 `
 	if err := runScriptInContainer(containerName, basePackagesScript, "install-base-packages.sh"); err != nil {
