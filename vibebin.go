@@ -1069,13 +1069,15 @@ func containerExistsInIncus(name string) bool {
 	return err == nil
 }
 
-// getHostPublicIP returns the host's public IP address
+// getHostPublicIP returns the host's public IPv4 address
 func getHostPublicIP() string {
 	// Try multiple services in case one is down
+	// Using IPv4-specific endpoints to avoid issues with cloud providers
+	// that may have internal IPs assigned to the main interface
 	services := []string{
-		"https://api.ipify.org",
-		"https://ifconfig.me/ip",
-		"https://icanhazip.com",
+		"https://api4.ipify.org",
+		"https://ipv4.icanhazip.com",
+		"https://checkip.amazonaws.com",
 	}
 	
 	client := &http.Client{Timeout: 5 * time.Second}
