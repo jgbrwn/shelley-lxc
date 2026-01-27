@@ -2173,30 +2173,32 @@ exec /usr/local/bin/shelley serve -port 9999
 	tmpStartShelley.Close()
 	exec.Command("incus", "file", "push", tmpStartShelley.Name(), containerName+"/usr/local/bin/start-shelley.sh").Run()
 	os.Remove(tmpStartShelley.Name())
-	rootExec("chmod", "+x", "/usr/local/bin/start-shelley.sh")
-	// Verify start-shelley.sh is executable
-	if err := rootExec("test", "-x", "/usr/local/bin/start-shelley.sh"); err != nil {
-		sendProgress("Warning: start-shelley.sh may not be executable")
+	rootExec("chmod", "755", "/usr/local/bin/start-shelley.sh")
+	// Verify start-shelley.sh is executable by user
+	checkCmd := exec.Command("incus", "exec", containerName, "--", "ls", "-la", "/usr/local/bin/start-shelley.sh")
+	if lsOut, _ := checkCmd.Output(); strings.Contains(string(lsOut), "rwxr-xr-x") {
+		sendProgress("✅ start-shelley.sh wrapper created (755)")
 	} else {
-		sendProgress("✅ start-shelley.sh wrapper created")
+		sendProgress(fmt.Sprintf("Warning: start-shelley.sh permissions may be incorrect: %s", strings.TrimSpace(string(lsOut))))
 	}
 
 	// Create .shelley_env template file for the user
 	shelleyEnvTemplate := `# Shelley Web Agent API Keys
-# Add your API keys below. Shelley will use these when started via start-shelley.sh
+# Replace the placeholder values with your actual API keys.
+# Shelley will use these when started via start-shelley.sh
 # See: https://github.com/boldsoftware/shelley
 
 # Anthropic (Claude)
-ANTHROPIC_API_KEY=
+ANTHROPIC_API_KEY=your-key-here
 
 # OpenAI (GPT-4, etc.)
-OPENAI_API_KEY=
+OPENAI_API_KEY=your-key-here
 
 # Google (Gemini)
-GEMINI_API_KEY=
+GEMINI_API_KEY=your-key-here
 
 # Fireworks AI
-FIREWORKS_API_KEY=
+FIREWORKS_API_KEY=your-key-here
 
 # Note: You can also configure custom models within Shelley's web UI,
 # but doing so switches to "custom model mode" and these env var models
@@ -2211,8 +2213,8 @@ FIREWORKS_API_KEY=
 	rootExec("chown", fmt.Sprintf("%s:%s", containerUser, containerUser), fmt.Sprintf("/home/%s/.shelley_env", containerUser))
 	rootExec("chmod", "600", fmt.Sprintf("/home/%s/.shelley_env", containerUser))
 	// Verify .shelley_env ownership
-	checkCmd := exec.Command("incus", "exec", containerName, "--", "stat", "-c", "%U", fmt.Sprintf("/home/%s/.shelley_env", containerUser))
-	if ownerOut, _ := checkCmd.Output(); strings.TrimSpace(string(ownerOut)) == containerUser {
+	ownerCheckCmd := exec.Command("incus", "exec", containerName, "--", "stat", "-c", "%U", fmt.Sprintf("/home/%s/.shelley_env", containerUser))
+	if ownerOut, _ := ownerCheckCmd.Output(); strings.TrimSpace(string(ownerOut)) == containerUser {
 		sendProgress("✅ .shelley_env template created")
 	} else {
 		sendProgress("Warning: .shelley_env created but ownership may be incorrect")
@@ -2590,7 +2592,7 @@ echo "    • Deno      $(${USER_HOME}/.deno/bin/deno --version 2>/dev/null | he
 echo "    • uv        $(${USER_HOME}/.local/bin/uv --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
 echo "    • opencode  $(${USER_HOME}/.opencode/bin/opencode --version 2>/dev/null || echo 'not found')"
 echo "    • nanocode  $(${USER_HOME}/.bun/bin/nanocode --version 2>/dev/null || echo 'not found')"
-echo "    • shelley   $(/usr/local/bin/shelley version 2>/dev/null | grep '\"version\"' | cut -d'\"' -f4 || echo 'not found')"
+echo "    • shelley   $(/usr/local/bin/shelley version 2>/dev/null | grep version | head -1 | awk -F'"' '{print $4}' || echo 'not found')"
 echo ""
 echo "  ─────────────────────────────────────────────────────────────────────────────"
 echo "  AI Coding Agents:"
