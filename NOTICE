@@ -28,12 +28,22 @@ Installed via bun during container creation.
 ================================================================================
 Shelley Web Agent
 ================================================================================
-Copyright © 2024-present Bold Software
+Copyright © 2024-present Bold Software, Inc.
 Licensed under the Apache License, Version 2.0
 Source: https://github.com/boldsoftware/shelley
 
 Used as an AI web coding agent inside containers.
-Installed as a binary during container creation.
+Built from source during container creation with the following modifications:
+
+  MODIFICATIONS (by vibebin project):
+  - server/system_prompt.go: Added check for SHELLEY_DOMAIN environment
+    variable to allow custom domain configuration instead of defaulting
+    to .exe.xyz suffix.
+  - server/handlers.go: Same modification as above for consistent
+    hostname/domain handling in the web UI.
+
+These modifications allow Shelley to display the correct App URL for
+self-hosted containers using custom domains.
 
 ================================================================================
 Incus (Linux Containers)
