@@ -2130,27 +2130,71 @@ echo "Node.js $(node --version) installed successfully"
 		sendProgress("✅ nanocode installed")
 	}
 
-	// STEP 10b: Install Shelley Web Agent
-	sendProgress("Installing Shelley Web Agent...")
-	shelleyInstallCmd := exec.Command("incus", "exec", containerName, "--", "bash", "-c",
-		`curl -fsSL -o /usr/local/bin/shelley "https://github.com/boldsoftware/shelley/releases/latest/download/shelley_linux_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && chmod +x /usr/local/bin/shelley`)
-	if out, err := shelleyInstallCmd.CombinedOutput(); err != nil {
-		sendProgress(fmt.Sprintf("Warning: Shelley installation failed: %v - %s", err, string(out)))
+	// STEP 10b: Build and Install Shelley Web Agent from source (with domain patch)
+	sendProgress("Building Shelley Web Agent from source...")
+	sendProgress("  (This may take 2-3 minutes)")
+	
+	// Shelley build script with patches for custom domain support
+	shelleyBuildScript := fmt.Sprintf(`#!/bin/bash
+set -e
+
+DOMAIN="%s"
+BUILD_DIR="/tmp/shelley-build-$$"
+
+echo "Cloning Shelley repository..."
+rm -rf "$BUILD_DIR"
+git clone --depth 1 https://github.com/boldsoftware/shelley.git "$BUILD_DIR" 2>&1 | tail -2
+cd "$BUILD_DIR"
+
+echo "Applying domain patches..."
+
+# Patch server/system_prompt.go - replace the hostname logic
+sed -i 's|// Get hostname for exe.dev|// Get hostname - check SHELLEY_DOMAIN env var first\n\tif envDomain := os.Getenv("SHELLEY_DOMAIN"); envDomain != "" {\n\t\tdata.Hostname = envDomain\n\t} else // Get hostname for exe.dev|' server/system_prompt.go
+
+# Patch server/handlers.go - replace the hostname logic  
+sed -i 's|// Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|// Get hostname - check SHELLEY_DOMAIN env var first\n\tif envDomain := os.Getenv("SHELLEY_DOMAIN"); envDomain != "" {\n\t\thostname = envDomain\n\t} else // Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|' server/handlers.go
+
+echo "Building UI..."
+cd ui
+npm install --silent 2>&1 | tail -3
+npm run build 2>&1 | tail -3
+cd ..
+
+echo "Building Shelley binary..."
+go build -o /usr/local/bin/shelley ./cmd/shelley 2>&1
+chmod 755 /usr/local/bin/shelley
+
+echo "Cleaning up..."
+rm -rf "$BUILD_DIR"
+
+echo "Verifying installation..."
+/usr/local/bin/shelley version | grep version | head -1
+
+echo "Shelley build complete!"
+`, domain)
+
+	tmpBuildScript, _ := os.CreateTemp("", "shelley-build-*.sh")
+	tmpBuildScript.WriteString(shelleyBuildScript)
+	tmpBuildScript.Close()
+	exec.Command("incus", "file", "push", tmpBuildScript.Name(), containerName+"/tmp/build-shelley.sh").Run()
+	os.Remove(tmpBuildScript.Name())
+	rootExec("chmod", "+x", "/tmp/build-shelley.sh")
+	
+	// Run the build script
+	buildCmd := exec.Command("incus", "exec", containerName, "--", "bash", "/tmp/build-shelley.sh")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		sendProgress(fmt.Sprintf("Warning: Shelley build failed: %v", err))
+		sendProgress(string(out))
 	} else {
-		// Verify installation
-		verifyCmd := exec.Command("incus", "exec", containerName, "--", "/usr/local/bin/shelley", "version")
-		if verifyOut, verifyErr := verifyCmd.CombinedOutput(); verifyErr != nil {
-			sendProgress(fmt.Sprintf("Warning: Shelley installed but verification failed: %v", verifyErr))
+		// Extract version from output
+		outStr := string(out)
+		if strings.Contains(outStr, "version") {
+			sendProgress("✅ Shelley built and installed")
 		} else {
-			// Extract version from JSON output
-			verifyStr := string(verifyOut)
-			if strings.Contains(verifyStr, "version") {
-				sendProgress("✅ Shelley installed and verified")
-			} else {
-				sendProgress("✅ Shelley installed")
-			}
+			sendProgress("✅ Shelley installed")
 		}
 	}
+	rootExec("rm", "-f", "/tmp/build-shelley.sh")
 
 	// Create start-shelley.sh wrapper script
 	startShelleyScript := `#!/bin/bash
@@ -2183,10 +2227,13 @@ exec /usr/local/bin/shelley serve -port 9999
 	}
 
 	// Create .shelley_env template file for the user
-	shelleyEnvTemplate := `# Shelley Web Agent API Keys
+	shelleyEnvTemplate := fmt.Sprintf(`# Shelley Web Agent Configuration
 # Replace the placeholder values with your actual API keys.
 # Shelley will use these when started via start-shelley.sh
 # See: https://github.com/boldsoftware/shelley
+
+# Domain for this container (used by Shelley for App URL display)
+SHELLEY_DOMAIN=%s
 
 # Anthropic (Claude)
 ANTHROPIC_API_KEY=your-key-here
@@ -2203,7 +2250,7 @@ FIREWORKS_API_KEY=your-key-here
 # Note: You can also configure custom models within Shelley's web UI,
 # but doing so switches to "custom model mode" and these env var models
 # will no longer be shown.
-`
+`, domain)
 	tmpShelleyEnv, _ := os.CreateTemp("", "shelley-env-*")
 	tmpShelleyEnv.WriteString(shelleyEnvTemplate)
 	tmpShelleyEnv.Close()
@@ -2442,17 +2489,45 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	latestShelleyStr := strings.TrimSpace(string(latestShelley))
 	currentShelleyStr := strings.TrimSpace(string(currentShelley))
 	send(fmt.Sprintf("\n📦 [3/3] Updating Shelley (current: %s, latest: %s)...", currentShelleyStr, latestShelleyStr))
-	shelleyUpdateCmd := "sudo curl -fsSL -o /usr/local/bin/shelley \"https://github.com/boldsoftware/shelley/releases/latest/download/shelley_linux_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')\" && sudo chmod +x /usr/local/bin/shelley"
+	
+	// Get SHELLEY_DOMAIN from .shelley_env
+	domainBytes, _ := exec.Command("bash", "-c", "grep '^SHELLEY_DOMAIN=' ~/.shelley_env 2>/dev/null | cut -d'=' -f2 || echo ''").Output()
+	shelleyDomain := strings.TrimSpace(string(domainBytes))
+	if shelleyDomain == "" {
+		shelleyDomain = "localhost"
+	}
+	
+	// Shelley build script (rebuilds from source with domain patch)
+	shelleyBuildScript := "#!/bin/bash\nset -e\nDOMAIN=\"" + shelleyDomain + "\"\nBUILD_DIR=\"/tmp/shelley-build-$$\"\n" +
+		"echo \"Cloning Shelley...\"\n" +
+		"rm -rf \"$BUILD_DIR\"\n" +
+		"git clone --depth 1 https://github.com/boldsoftware/shelley.git \"$BUILD_DIR\" 2>&1 | tail -1\n" +
+		"cd \"$BUILD_DIR\"\n" +
+		"echo \"Patching for custom domain...\"\n" +
+		"sed -i 's|// Get hostname for exe.dev|// Get hostname - check SHELLEY_DOMAIN env var first\\n\\tif envDomain := os.Getenv(\"SHELLEY_DOMAIN\"); envDomain != \"\" {\\n\\t\\tdata.Hostname = envDomain\\n\\t} else // Get hostname for exe.dev|' server/system_prompt.go\n" +
+		"sed -i 's|// Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|// Get hostname - check SHELLEY_DOMAIN env var first\\n\\tif envDomain := os.Getenv(\"SHELLEY_DOMAIN\"); envDomain != \"\" {\\n\\t\\thostname = envDomain\\n\\t} else // Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|' server/handlers.go\n" +
+		"echo \"Building UI...\"\n" +
+		"cd ui && npm install --silent 2>&1 | tail -1 && npm run build 2>&1 | tail -1 && cd ..\n" +
+		"echo \"Building binary...\"\n" +
+		"sudo go build -o /usr/local/bin/shelley ./cmd/shelley 2>&1\n" +
+		"sudo chmod 755 /usr/local/bin/shelley\n" +
+		"rm -rf \"$BUILD_DIR\"\n" +
+		"/usr/local/bin/shelley version | grep version\n" +
+		"echo \"Done!\"\n"
+	
 	if latestShelleyStr != "" && currentShelleyStr != latestShelleyStr && currentShelleyStr != "not installed" {
-		send("Running: curl -fsSL -o /usr/local/bin/shelley ...")
-		out, err := exec.Command("bash", "-c", shelleyUpdateCmd).CombinedOutput()
+		send("Rebuilding from source (this may take 1-2 minutes)...")
+		out, err := exec.Command("bash", "-c", shelleyBuildScript).CombinedOutput()
+		outLines := strings.Split(string(out), "\n")
+		for _, line := range outLines {
+			if strings.TrimSpace(line) != "" { send(line) }
+		}
 		if err != nil {
-			send(fmt.Sprintf("Error: %v - %s", err, string(out)))
+			send(fmt.Sprintf("Error: %v", err))
 		} else {
-			// Verify update
 			verify, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"version\"' | cut -d'\"' -f4").Output()
-			if len(strings.TrimSpace(string(verify))) > 0 {
-				send(fmt.Sprintf("✅ Shelley updated to %s\n", strings.TrimSpace(string(verify))))
+			if v := strings.TrimSpace(string(verify)); v != "" {
+				send(fmt.Sprintf("✅ Shelley updated to %s\n", v))
 			} else {
 				send("✅ Shelley updated\n")
 			}
@@ -2460,17 +2535,21 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	} else if currentShelleyStr == latestShelleyStr {
 		send("Already at latest version\n")
 	} else {
-		send("Installing Shelley...")
-		out, err := exec.Command("bash", "-c", shelleyUpdateCmd).CombinedOutput()
+		send("Building from source (this may take 1-2 minutes)...")
+		out, err := exec.Command("bash", "-c", shelleyBuildScript).CombinedOutput()
+		outLines := strings.Split(string(out), "\n")
+		for _, line := range outLines {
+			if strings.TrimSpace(line) != "" { send(line) }
+		}
 		if err != nil {
-			send(fmt.Sprintf("Error: %v - %s", err, string(out)))
+			send(fmt.Sprintf("Error: %v", err))
 		} else {
-			// Verify installation
 			verify, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"version\"' | cut -d'\"' -f4").Output()
-			if len(strings.TrimSpace(string(verify))) > 0 {
-				send(fmt.Sprintf("✅ Shelley installed (version %s)\n", strings.TrimSpace(string(verify))))
+			if v := strings.TrimSpace(string(verify)); v != "" {
+				send(fmt.Sprintf("✅ Shelley installed (version %s)\n", v))
 			} else {
 				send("✅ Shelley installed\n")
+			}
 			}
 		}
 	}
@@ -2524,8 +2603,8 @@ function esc(t){const d=document.createElement('div');d.textContent=t;return d.i
 
 	// Build the admin app inside container
 	sendProgress("Building admin app...")
-	buildCmd := fmt.Sprintf("cd /home/%s/admin.code && /usr/local/go/bin/go build -o admin-app .", containerUser)
-	if err := rootExec("bash", "-c", buildCmd); err != nil {
+	adminBuildCmd := fmt.Sprintf("cd /home/%s/admin.code && /usr/local/go/bin/go build -o admin-app .", containerUser)
+	if err := rootExec("bash", "-c", adminBuildCmd); err != nil {
 		sendProgress(fmt.Sprintf("Warning: Admin app build failed: %v", err))
 	} else {
 		// Fix ownership
@@ -2855,16 +2934,45 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			result += fmt.Sprintf("\n✅ nanocode is already up to date (%s)\n", currentNanocode)
 		}
 
-		// Step 6: Update shelley if needed
-		shelleyInstallCmd := `curl -fsSL -o /usr/local/bin/shelley "https://github.com/boldsoftware/shelley/releases/latest/download/shelley_linux_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && chmod +x /usr/local/bin/shelley`
+		// Step 6: Update shelley if needed (build from source with domain patch)
+		// Get domain from .shelley_env
+		domainOut, _ := userExec("grep '^SHELLEY_DOMAIN=' ~/.shelley_env 2>/dev/null | cut -d'=' -f2 || echo ''")
+		shelleyDomain := strings.TrimSpace(domainOut)
+		if shelleyDomain == "" {
+			shelleyDomain = "localhost"
+		}
+		
+		// Shelley build script
+		shelleyBuildScript := fmt.Sprintf(`
+set -e
+DOMAIN="%s"
+BUILD_DIR="/tmp/shelley-build-$$"
+echo "Cloning Shelley repository..."
+rm -rf "$BUILD_DIR"
+git clone --depth 1 https://github.com/boldsoftware/shelley.git "$BUILD_DIR" 2>&1 | tail -1
+cd "$BUILD_DIR"
+echo "Applying domain patches..."
+sed -i 's|// Get hostname for exe.dev|// Get hostname - check SHELLEY_DOMAIN env var first\n\tif envDomain := os.Getenv("SHELLEY_DOMAIN"); envDomain != "" {\n\t\tdata.Hostname = envDomain\n\t} else // Get hostname for exe.dev|' server/system_prompt.go
+sed -i 's|// Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|// Get hostname - check SHELLEY_DOMAIN env var first\n\tif envDomain := os.Getenv("SHELLEY_DOMAIN"); envDomain != "" {\n\t\thostname = envDomain\n\t} else // Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|' server/handlers.go
+echo "Building UI..."
+cd ui && npm install --silent 2>&1 | tail -2 && npm run build 2>&1 | tail -2 && cd ..
+echo "Building Shelley binary..."
+go build -o /usr/local/bin/shelley ./cmd/shelley 2>&1
+chmod 755 /usr/local/bin/shelley
+rm -rf "$BUILD_DIR"
+echo "Verifying..."
+/usr/local/bin/shelley version | grep version | head -1
+`, shelleyDomain)
+		
 		if shelleyNeedsUpdate {
 			result += fmt.Sprintf("\nUpdating shelley (%s -> %s)...\n", currentShelley, latestShelley)
-			shelleyOut, err := rootExec(shelleyInstallCmd)
+			result += "Building from source (this may take 1-2 minutes)...\n"
+			shelleyOut, err := rootExec(shelleyBuildScript)
+			result += shelleyOut
 			if err != nil {
-				result += fmt.Sprintf("Warning: shelley update had issues: %v\n%s", err, shelleyOut)
+				result += fmt.Sprintf("Warning: shelley update had issues: %v\n", err)
 				shelleyErr = err
 			} else {
-				// Verify installation
 				verifyOut, _ := rootExec("/usr/local/bin/shelley version 2>/dev/null | grep '\"version\"' | cut -d'\"' -f4")
 				if v := strings.TrimSpace(verifyOut); v != "" {
 					result += fmt.Sprintf("✅ shelley updated to %s\n", v)
@@ -2874,12 +2982,13 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			}
 		} else if currentShelley == "not installed" {
 			result += "\nInstalling shelley...\n"
-			shelleyOut, err := rootExec(shelleyInstallCmd)
+			result += "Building from source (this may take 1-2 minutes)...\n"
+			shelleyOut, err := rootExec(shelleyBuildScript)
+			result += shelleyOut
 			if err != nil {
-				result += fmt.Sprintf("Warning: shelley install had issues: %v\n%s", err, shelleyOut)
+				result += fmt.Sprintf("Warning: shelley install had issues: %v\n", err)
 				shelleyErr = err
 			} else {
-				// Verify installation
 				verifyOut, _ := rootExec("/usr/local/bin/shelley version 2>/dev/null | grep '\"version\"' | cut -d'\"' -f4")
 				if v := strings.TrimSpace(verifyOut); v != "" {
 					result += fmt.Sprintf("✅ shelley installed (version %s)\n", v)
