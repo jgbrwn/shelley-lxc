@@ -2148,11 +2148,73 @@ cd "$BUILD_DIR"
 
 echo "Applying domain patches..."
 
-# Patch server/system_prompt.go - replace the hostname logic
-sed -i 's|// Get hostname for exe.dev|// Get hostname - check SHELLEY_DOMAIN env var first\n\tif envDomain := os.Getenv("SHELLEY_DOMAIN"); envDomain != "" {\n\t\tdata.Hostname = envDomain\n\t} else // Get hostname for exe.dev|' server/system_prompt.go
+# Use Python for reliable patching
+python3 << 'PYEOF'
+# Patch handlers.go
+with open('server/handlers.go', 'r') as f:
+    content = f.read()
 
-# Patch server/handlers.go - replace the hostname logic  
-sed -i 's|// Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|// Get hostname - check SHELLEY_DOMAIN env var first\n\tif envDomain := os.Getenv("SHELLEY_DOMAIN"); envDomain != "" {\n\t\thostname = envDomain\n\t} else // Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|' server/handlers.go
+old_block = '''\t// Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)
+\thostname := "localhost"
+\tif h, err := os.Hostname(); err == nil {
+\t\tif !strings.Contains(h, ".") {
+\t\t\thostname = h + ".exe.xyz"
+\t\t} else {
+\t\t\thostname = h
+\t\t}
+\t}'''
+
+new_block = '''\t// Get hostname - check SHELLEY_DOMAIN env var first, then fall back to original logic
+\thostname := os.Getenv("SHELLEY_DOMAIN")
+\tif hostname == "" {
+\t\thostname = "localhost"
+\t\tif h, err := os.Hostname(); err == nil {
+\t\t\tif !strings.Contains(h, ".") {
+\t\t\t\thostname = h + ".exe.xyz"
+\t\t\t} else {
+\t\t\t\thostname = h
+\t\t\t}
+\t\t}
+\t}'''
+
+content = content.replace(old_block, new_block)
+with open('server/handlers.go', 'w') as f:
+    f.write(content)
+print("handlers.go patched")
+
+# Patch system_prompt.go
+with open('server/system_prompt.go', 'r') as f:
+    content = f.read()
+
+old_block = '''\t// Get hostname for exe.dev
+\tif data.IsExeDev {
+\t\tif hostname, err := os.Hostname(); err == nil {
+\t\t\t// If hostname doesn't contain dots, add .exe.xyz suffix
+\t\t\tif !strings.Contains(hostname, ".") {
+\t\t\t\thostname = hostname + ".exe.xyz"
+\t\t\t}
+\t\t\tdata.Hostname = hostname
+\t\t}
+\t}'''
+
+new_block = '''\t// Get hostname - check SHELLEY_DOMAIN env var first
+\tif envDomain := os.Getenv("SHELLEY_DOMAIN"); envDomain != "" {
+\t\tdata.Hostname = envDomain
+\t} else if data.IsExeDev {
+\t\tif hostname, err := os.Hostname(); err == nil {
+\t\t\t// If hostname doesn't contain dots, add .exe.xyz suffix
+\t\t\tif !strings.Contains(hostname, ".") {
+\t\t\t\thostname = hostname + ".exe.xyz"
+\t\t\t}
+\t\t\tdata.Hostname = hostname
+\t\t}
+\t}'''
+
+content = content.replace(old_block, new_block)
+with open('server/system_prompt.go', 'w') as f:
+    f.write(content)
+print("system_prompt.go patched")
+PYEOF
 
 echo "Building UI..."
 cd ui
@@ -2504,14 +2566,23 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Shelley build script (rebuilds from source with domain patch)
-	shelleyBuildScript := "#!/bin/bash\nset -e\nDOMAIN=\"" + shelleyDomain + "\"\nBUILD_DIR=\"/tmp/shelley-build-$$\"\n" +
+	shelleyBuildScript := "#!/bin/bash\nset -e\nBUILD_DIR=\"/tmp/shelley-build-$$\"\n" +
 		"echo \"Cloning Shelley...\"\n" +
 		"rm -rf \"$BUILD_DIR\"\n" +
 		"git clone --depth 1 https://github.com/boldsoftware/shelley.git \"$BUILD_DIR\" 2>&1 | tail -1\n" +
 		"cd \"$BUILD_DIR\"\n" +
 		"echo \"Patching for custom domain...\"\n" +
-		"sed -i 's|// Get hostname for exe.dev|// Get hostname - check SHELLEY_DOMAIN env var first\\n\\tif envDomain := os.Getenv(\"SHELLEY_DOMAIN\"); envDomain != \"\" {\\n\\t\\tdata.Hostname = envDomain\\n\\t} else // Get hostname for exe.dev|' server/system_prompt.go\n" +
-		"sed -i 's|// Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|// Get hostname - check SHELLEY_DOMAIN env var first\\n\\tif envDomain := os.Getenv(\"SHELLEY_DOMAIN\"); envDomain != \"\" {\\n\\t\\thostname = envDomain\\n\\t} else // Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|' server/handlers.go\n" +
+		"python3 -c \"" +
+		"import sys; " +
+		"c=open('server/handlers.go').read(); " +
+		"old='''\\t// Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)\\n\\thostname := \\\"localhost\\\"\\n\\tif h, err := os.Hostname(); err == nil {\\n\\t\\tif !strings.Contains(h, \\\".\\\") {\\n\\t\\t\\thostname = h + \\\".exe.xyz\\\"\\n\\t\\t} else {\\n\\t\\t\\thostname = h\\n\\t\\t}\\n\\t}'''; " +
+		"new='''\\t// Get hostname - check SHELLEY_DOMAIN env var first\\n\\thostname := os.Getenv(\\\"SHELLEY_DOMAIN\\\")\\n\\tif hostname == \\\"\\\" {\\n\\t\\thostname = \\\"localhost\\\"\\n\\t\\tif h, err := os.Hostname(); err == nil {\\n\\t\\t\\tif !strings.Contains(h, \\\".\\\") {\\n\\t\\t\\t\\thostname = h + \\\".exe.xyz\\\"\\n\\t\\t\\t} else {\\n\\t\\t\\t\\thostname = h\\n\\t\\t\\t}\\n\\t\\t}\\n\\t}'''; " +
+		"open('server/handlers.go','w').write(c.replace(old,new)); " +
+		"c=open('server/system_prompt.go').read(); " +
+		"old='''\\t// Get hostname for exe.dev\\n\\tif data.IsExeDev {\\n\\t\\tif hostname, err := os.Hostname(); err == nil {\\n\\t\\t\\t// If hostname doesn't contain dots, add .exe.xyz suffix\\n\\t\\t\\tif !strings.Contains(hostname, \\\".\\\") {\\n\\t\\t\\t\\thostname = hostname + \\\".exe.xyz\\\"\\n\\t\\t\\t}\\n\\t\\t\\tdata.Hostname = hostname\\n\\t\\t}\\n\\t}'''; " +
+		"new='''\\t// Get hostname - check SHELLEY_DOMAIN env var first\\n\\tif envDomain := os.Getenv(\\\"SHELLEY_DOMAIN\\\"); envDomain != \\\"\\\" {\\n\\t\\tdata.Hostname = envDomain\\n\\t} else if data.IsExeDev {\\n\\t\\tif hostname, err := os.Hostname(); err == nil {\\n\\t\\t\\t// If hostname doesn't contain dots, add .exe.xyz suffix\\n\\t\\t\\tif !strings.Contains(hostname, \\\".\\\") {\\n\\t\\t\\t\\thostname = hostname + \\\".exe.xyz\\\"\\n\\t\\t\\t}\\n\\t\\t\\tdata.Hostname = hostname\\n\\t\\t}\\n\\t}'''; " +
+		"open('server/system_prompt.go','w').write(c.replace(old,new)); " +
+		"print('Patched')\"\n" +
 		"echo \"Building UI...\"\n" +
 		"cd ui && npm install --silent 2>&1 | tail -1 && npm run build 2>&1 | tail -1 && cd ..\n" +
 		"echo \"Building templates...\"\n" +
@@ -2949,18 +3020,74 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			shelleyDomain = "localhost"
 		}
 		
-		// Shelley build script
-		shelleyBuildScript := fmt.Sprintf(`
+		// Shelley build script - uses Python for reliable patching
+		shelleyBuildScript := `
 set -e
-DOMAIN="%s"
 BUILD_DIR="/tmp/shelley-build-$$"
 echo "Cloning Shelley repository..."
 rm -rf "$BUILD_DIR"
 git clone --depth 1 https://github.com/boldsoftware/shelley.git "$BUILD_DIR" 2>&1 | tail -1
 cd "$BUILD_DIR"
 echo "Applying domain patches..."
-sed -i 's|// Get hostname for exe.dev|// Get hostname - check SHELLEY_DOMAIN env var first\n\tif envDomain := os.Getenv("SHELLEY_DOMAIN"); envDomain != "" {\n\t\tdata.Hostname = envDomain\n\t} else // Get hostname for exe.dev|' server/system_prompt.go
-sed -i 's|// Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|// Get hostname - check SHELLEY_DOMAIN env var first\n\tif envDomain := os.Getenv("SHELLEY_DOMAIN"); envDomain != "" {\n\t\thostname = envDomain\n\t} else // Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)|' server/handlers.go
+python3 << 'PYEOF'
+# Patch handlers.go
+with open('server/handlers.go', 'r') as f:
+    content = f.read()
+old_block = '''\t// Get hostname (add .exe.xyz suffix if no dots, matching system_prompt.go)
+\thostname := "localhost"
+\tif h, err := os.Hostname(); err == nil {
+\t\tif !strings.Contains(h, ".") {
+\t\t\thostname = h + ".exe.xyz"
+\t\t} else {
+\t\t\thostname = h
+\t\t}
+\t}'''
+new_block = '''\t// Get hostname - check SHELLEY_DOMAIN env var first
+\thostname := os.Getenv("SHELLEY_DOMAIN")
+\tif hostname == "" {
+\t\thostname = "localhost"
+\t\tif h, err := os.Hostname(); err == nil {
+\t\t\tif !strings.Contains(h, ".") {
+\t\t\t\thostname = h + ".exe.xyz"
+\t\t\t} else {
+\t\t\t\thostname = h
+\t\t\t}
+\t\t}
+\t}'''
+content = content.replace(old_block, new_block)
+with open('server/handlers.go', 'w') as f:
+    f.write(content)
+print("handlers.go patched")
+# Patch system_prompt.go
+with open('server/system_prompt.go', 'r') as f:
+    content = f.read()
+old_block = '''\t// Get hostname for exe.dev
+\tif data.IsExeDev {
+\t\tif hostname, err := os.Hostname(); err == nil {
+\t\t\t// If hostname doesn't contain dots, add .exe.xyz suffix
+\t\t\tif !strings.Contains(hostname, ".") {
+\t\t\t\thostname = hostname + ".exe.xyz"
+\t\t\t}
+\t\t\tdata.Hostname = hostname
+\t\t}
+\t}'''
+new_block = '''\t// Get hostname - check SHELLEY_DOMAIN env var first
+\tif envDomain := os.Getenv("SHELLEY_DOMAIN"); envDomain != "" {
+\t\tdata.Hostname = envDomain
+\t} else if data.IsExeDev {
+\t\tif hostname, err := os.Hostname(); err == nil {
+\t\t\t// If hostname doesn't contain dots, add .exe.xyz suffix
+\t\t\tif !strings.Contains(hostname, ".") {
+\t\t\t\thostname = hostname + ".exe.xyz"
+\t\t\t}
+\t\t\tdata.Hostname = hostname
+\t\t}
+\t}'''
+content = content.replace(old_block, new_block)
+with open('server/system_prompt.go', 'w') as f:
+    f.write(content)
+print("system_prompt.go patched")
+PYEOF
 echo "Building UI..."
 cd ui && npm install --silent 2>&1 | tail -2 && npm run build 2>&1 | tail -2 && cd ..
 echo "Building templates..."
@@ -2971,7 +3098,7 @@ chmod 755 /usr/local/bin/shelley
 rm -rf "$BUILD_DIR"
 echo "Verifying..."
 /usr/local/bin/shelley version | grep version | head -1
-`, shelleyDomain)
+`
 		
 		if shelleyNeedsUpdate {
 			result += fmt.Sprintf("\nUpdating shelley (%s -> %s)...\n", currentShelley, latestShelley)
