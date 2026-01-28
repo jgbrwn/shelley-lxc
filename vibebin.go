@@ -2577,7 +2577,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// Step 2: Check current versions
 	send("Checking current versions...")
 	currentOpencode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.opencode/bin/opencode --version 2>/dev/null || echo 'not installed'").Output(); return out }()))
-	currentNanocode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.bun/bin/nanocode --version 2>/dev/null || echo 'not installed'").Output(); return out }()))
+	currentNanocode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "cat $HOME/.bun/install/global/node_modules/nanocode/package.json 2>/dev/null | grep '\"version\"' | head -1 | cut -d'\"' -f4 || echo 'not installed'").Output(); return out }()))
 	currentShelleyCommit := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"commit\"' | cut -d'\"' -f4 || echo 'not installed'").Output(); return out }()))
 	currentClaudeCode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}' || echo 'not installed'").Output(); return out }()))
 	currentShelleyDisplay := currentShelleyCommit
@@ -2644,7 +2644,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		out, _ := cmd.CombinedOutput()
 		cancel()
 		if len(strings.TrimSpace(string(out))) > 0 { send(strings.TrimSpace(string(out))) }
-		newVer, _ := exec.Command("bash", "-c", "$HOME/.bun/bin/nanocode --version 2>/dev/null").Output()
+		newVer, _ := exec.Command("bash", "-c", "cat $HOME/.bun/install/global/node_modules/nanocode/package.json 2>/dev/null | grep '\"version\"' | head -1 | cut -d'\"' -f4").Output()
 		send(fmt.Sprintf("✅ nanocode updated to %s\n", strings.TrimSpace(string(newVer))))
 	} else if currentNanocode == "not installed" {
 		send("Installing nanocode...")
@@ -2869,7 +2869,7 @@ WantedBy=multi-user.target
 	// STEP 11: Configure custom MOTD
 	sendProgress("Configuring welcome message (MOTD)...")
 	motdScript := fmt.Sprintf(`#!/bin/bash
-# incus-manager custom MOTD
+# vibebin custom MOTD
 
 # User home directory for tool paths
 USER_HOME="/home/%s"
@@ -2892,7 +2892,7 @@ echo "    • Bun       $(${USER_HOME}/.bun/bin/bun --version 2>/dev/null || ech
 echo "    • Deno      $(${USER_HOME}/.deno/bin/deno --version 2>/dev/null | head -1 | awk '{print $2}' || echo 'not found')"
 echo "    • uv        $(${USER_HOME}/.local/bin/uv --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
 echo "    • opencode    $(${USER_HOME}/.opencode/bin/opencode --version 2>/dev/null || echo 'not found')"
-echo "    • nanocode    $(${USER_HOME}/.bun/bin/nanocode --version 2>/dev/null || echo 'not found')"
+echo "    • nanocode    $(cat ${USER_HOME}/.bun/install/global/node_modules/nanocode/package.json 2>/dev/null | grep '"version"' | head -1 | cut -d'"' -f4 || echo 'not found')"
 echo "    • claude-code $(${USER_HOME}/.local/bin/claude --version 2>/dev/null | head -1 || echo 'not found')"
 echo "    • shelley     $(/usr/local/bin/shelley version 2>/dev/null | grep commit | head -1 | awk -F'"' '{print substr($4,1,7)}' || echo 'not found')"
 echo ""
@@ -2929,12 +2929,12 @@ echo "  Documentation: https://github.com/jgbrwn/vibebin"
 echo "═══════════════════════════════════════════════════════════════════════════════"
 echo ""
 `, containerUser, containerName, domain, domain, domain, domain, domain)
-	tmpMotd, _ := os.CreateTemp("", "99-incus-manager")
+	tmpMotd, _ := os.CreateTemp("", "99-vibebin")
 	tmpMotd.WriteString(motdScript)
 	tmpMotd.Close()
-	exec.Command("incus", "file", "push", tmpMotd.Name(), containerName+"/etc/update-motd.d/99-incus-manager").Run()
+	exec.Command("incus", "file", "push", tmpMotd.Name(), containerName+"/etc/update-motd.d/99-vibebin").Run()
 	os.Remove(tmpMotd.Name())
-	rootExec("chmod", "+x", "/etc/update-motd.d/99-incus-manager")
+	rootExec("chmod", "+x", "/etc/update-motd.d/99-vibebin")
 
 	sendProgress("Container environment configuration complete!")
 	return nil
@@ -3052,7 +3052,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			return v
 		}())
 		currentNanocode := strings.TrimSpace(func() string {
-			v, _ := userExec("~/.bun/bin/nanocode --version 2>/dev/null || echo 'not installed'")
+			v, _ := userExec("cat ~/.bun/install/global/node_modules/nanocode/package.json 2>/dev/null | grep '\"version\"' | head -1 | cut -d'\"' -f4 || echo 'not installed'")
 			return v
 		}())
 		currentClaudeCode := strings.TrimSpace(func() string {
@@ -3136,7 +3136,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 		// Step 5: Update nanocode if needed (via bun)
 		if nanocodeNeedsUpdate {
 			result += fmt.Sprintf("\nUpdating nanocode (%s -> %s)...\n", currentNanocode, latestNanocode)
-			nanocodeOut, err := userExec("export PATH=$PATH:$HOME/.bun/bin && bun i -g nanocode@latest && ~/.bun/bin/nanocode --version")
+			nanocodeOut, err := userExec("export PATH=$PATH:$HOME/.bun/bin && bun i -g nanocode@latest")
 			result += nanocodeOut
 			nanocodeErr = err
 			if err != nil {
@@ -3146,7 +3146,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			}
 		} else if currentNanocode == "not installed" {
 			result += "\nInstalling nanocode...\n"
-			nanocodeOut, err := userExec("export PATH=$PATH:$HOME/.bun/bin && bun i -g nanocode@latest && ~/.bun/bin/nanocode --version")
+			nanocodeOut, err := userExec("export PATH=$PATH:$HOME/.bun/bin && bun i -g nanocode@latest")
 			result += nanocodeOut
 			nanocodeErr = err
 			if err != nil {
