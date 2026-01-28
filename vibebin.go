@@ -2540,8 +2540,10 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// Get current versions
 	currentOpencode, _ := exec.Command("bash", "-c", "$HOME/.opencode/bin/opencode --version 2>/dev/null || echo 'not installed'").Output()
 	currentNanocode, _ := exec.Command("bash", "-c", "$HOME/.bun/bin/nanocode --version 2>/dev/null || echo 'not installed'").Output()
-	currentShelley, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"version\"' | cut -d'\"' -f4 || echo 'not installed'").Output()
-	send(fmt.Sprintf("Current: opencode %s, nanocode %s, shelley %s\n", strings.TrimSpace(string(currentOpencode)), strings.TrimSpace(string(currentNanocode)), strings.TrimSpace(string(currentShelley))))
+	currentShelleyCommit, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"commit\"' | cut -d'\"' -f4 || echo 'not installed'").Output()
+	shelleyDisplay := strings.TrimSpace(string(currentShelleyCommit))
+	if len(shelleyDisplay) > 7 { shelleyDisplay = shelleyDisplay[:7] }
+	send(fmt.Sprintf("Current: opencode %s, nanocode %s, shelley %s\n", strings.TrimSpace(string(currentOpencode)), strings.TrimSpace(string(currentNanocode)), shelleyDisplay))
 	send("\n📦 [1/3] Updating opencode...")
 	send("Running: curl -fsSL https://opencode.ai/install | bash")
 	out, _ := exec.Command("bash", "-c", "curl -fsSL https://opencode.ai/install 2>/dev/null | bash 2>&1 | tail -5").CombinedOutput()
@@ -2552,11 +2554,15 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	out, _ = exec.Command("bash", "-c", "export PATH=$PATH:$HOME/.bun/bin && bun i -g nanocode@latest 2>&1 | grep -v '^$'").CombinedOutput()
 	if len(strings.TrimSpace(string(out))) > 0 { send(string(out)) }
 	send("✅ nanocode updated\n")
-	// Get latest Shelley version from GitHub
-	latestShelley, _ := exec.Command("bash", "-c", "curl -sI https://github.com/boldsoftware/shelley/releases/latest 2>/dev/null | grep -i '^location:' | sed 's|.*/v||' | tr -d '\\r\\n' || echo ''").Output()
-	latestShelleyStr := strings.TrimSpace(string(latestShelley))
-	currentShelleyStr := strings.TrimSpace(string(currentShelley))
-	send(fmt.Sprintf("\n📦 [3/3] Updating Shelley (current: %s, latest: %s)...", currentShelleyStr, latestShelleyStr))
+	// Get latest Shelley commit from GitHub main branch
+	latestShelleyCommit, _ := exec.Command("bash", "-c", "curl -s https://api.github.com/repos/boldsoftware/shelley/commits/main | grep '\"sha\"' | head -1 | cut -d'\"' -f4 || echo ''").Output()
+	latestShelleyStr := strings.TrimSpace(string(latestShelleyCommit))
+	currentShelleyStr := strings.TrimSpace(string(currentShelleyCommit))
+	latestDisplay := latestShelleyStr
+	if len(latestDisplay) > 7 { latestDisplay = latestDisplay[:7] }
+	currentDisplay := currentShelleyStr
+	if len(currentDisplay) > 7 { currentDisplay = currentDisplay[:7] }
+	send(fmt.Sprintf("\n📦 [3/3] Updating Shelley (current: %s, latest: %s)...", currentDisplay, latestDisplay))
 	
 	// Get SHELLEY_DOMAIN from .shelley_env
 	domainBytes, _ := exec.Command("bash", "-c", "grep '^SHELLEY_DOMAIN=' ~/.shelley_env 2>/dev/null | cut -d'=' -f2 || echo ''").Output()
@@ -2604,15 +2610,16 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			send(fmt.Sprintf("Error: %v", err))
 		} else {
-			verify, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"version\"' | cut -d'\"' -f4").Output()
+			verify, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"commit\"' | cut -d'\"' -f4").Output()
 			if v := strings.TrimSpace(string(verify)); v != "" {
+				if len(v) > 7 { v = v[:7] }
 				send(fmt.Sprintf("✅ Shelley updated to %s\n", v))
 			} else {
 				send("✅ Shelley updated\n")
 			}
 		}
 	} else if currentShelleyStr == latestShelleyStr {
-		send("Already at latest version\n")
+		send("Already at latest commit\n")
 	} else {
 		send("Building from source (this may take 1-2 minutes)...")
 		out, err := exec.Command("bash", "-c", shelleyBuildScript).CombinedOutput()
@@ -2623,9 +2630,10 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			send(fmt.Sprintf("Error: %v", err))
 		} else {
-			verify, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"version\"' | cut -d'\"' -f4").Output()
+			verify, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"commit\"' | cut -d'\"' -f4").Output()
 			if v := strings.TrimSpace(string(verify)); v != "" {
-				send(fmt.Sprintf("✅ Shelley installed (version %s)\n", v))
+				if len(v) > 7 { v = v[:7] }
+				send(fmt.Sprintf("✅ Shelley installed (commit %s)\n", v))
 			} else {
 				send("✅ Shelley installed\n")
 			}
@@ -2642,9 +2650,9 @@ func handleDNSCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 var indexHTML = ` + "`" + `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Tools Admin</title>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Tools Admin</title><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
 <style>:root{--bg:#0f0f0f;--bg2:#1a1a1a;--bg3:#252525;--txt:#fff;--txt2:#a0a0a0;--acc:#6366f1;--ok:#22c55e;--warn:#f59e0b;--err:#ef4444;--bdr:#333}*{margin:0;padding:0;box-sizing:border-box}body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--txt);min-height:100vh}.c{max-width:800px;margin:0 auto;padding:2rem}h1{font-size:1.75rem;margin-bottom:.5rem;background:linear-gradient(135deg,var(--acc),#a855f7);-webkit-background-clip:text;-webkit-text-fill-color:transparent}.links{display:flex;justify-content:center;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap}.lbtn{display:inline-flex;align-items:center;gap:.5rem;padding:.5rem 1rem;background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);text-decoration:none;font-size:.875rem}.lbtn:hover{background:var(--bg3);border-color:var(--acc)}.dns-ok{color:var(--ok)}.dns-fail{color:var(--err)}.mt{display:flex;justify-content:center;margin-bottom:2rem}.tc{display:flex;background:var(--bg2);border-radius:12px;padding:4px;border:1px solid var(--bdr)}.tb{padding:.75rem 2rem;border:none;background:transparent;color:var(--txt2);font-size:.9rem;font-weight:500;cursor:pointer;border-radius:8px}.tb.active{background:var(--acc);color:#fff}.sec{display:none}.sec.active{display:block}.card{background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;padding:1.25rem;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between}.card:hover{border-color:var(--acc)}.card.active{border-color:var(--ok);background:rgba(34,197,94,.1)}.ti{display:flex;align-items:center;gap:1rem}.icon{width:40px;height:40px;background:var(--bg3);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.25rem}.tn{font-weight:600;font-size:1.1rem}.ts{font-size:.8rem;color:var(--txt2)}.ts.run{color:var(--ok)}.sw{position:relative;width:52px;height:28px}.sw input{opacity:0;width:0;height:0}.sl{position:absolute;cursor:pointer;inset:0;background:var(--bg3);border-radius:28px;transition:.3s;border:1px solid var(--bdr)}.sl:before{position:absolute;content:"";height:20px;width:20px;left:3px;bottom:3px;background:var(--txt2);border-radius:50%;transition:.3s}input:checked+.sl{background:var(--ok);border-color:var(--ok)}input:checked+.sl:before{transform:translateX(24px);background:#fff}input:disabled+.sl{opacity:.5;cursor:not-allowed}.ls{margin-top:2rem}.lh{display:flex;justify-content:space-between;margin-bottom:.75rem}.lt{font-size:.9rem;color:var(--txt2);font-weight:500}.lv{background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;padding:1rem;height:300px;overflow-y:auto;font-family:monospace;font-size:.8rem}.ll{color:var(--txt2);white-space:pre-wrap;word-break:break-all}.ll.hi{color:var(--acc)}.ll.ok{color:var(--ok)}.ll.er{color:var(--err)}.us{text-align:center}.uw{background:rgba(245,158,11,.1);border:1px solid var(--warn);border-radius:12px;padding:1.5rem;margin-bottom:2rem;text-align:left}.uw h3{color:var(--warn);margin-bottom:.75rem;font-size:1rem}.uw ul{color:var(--txt2);margin-left:1.5rem;font-size:.9rem}.uw li{margin-bottom:.5rem}.ub{background:var(--acc);color:#fff;border:none;padding:1rem 2rem;font-size:1rem;font-weight:600;border-radius:10px;cursor:pointer}.ub:hover{background:#818cf8}.ub:disabled{opacity:.5;cursor:not-allowed}.up{margin-top:2rem;display:none}.up.active{display:block}.sp{display:inline-block;width:16px;height:16px;border:2px solid var(--bdr);border-top-color:var(--acc);border-radius:50%;animation:spin 1s linear infinite;margin-right:.5rem}@keyframes spin{to{transform:rotate(360deg)}}footer{text-align:center;margin-top:3rem;padding-top:2rem;border-top:1px solid var(--bdr);color:var(--txt2);font-size:.8rem}footer a{color:var(--acc);text-decoration:none}</style></head>
-<body><div class="c"><header style="text-align:center;margin-bottom:2rem"><h1>🤖 AI Tools Admin</h1>
+<body><div class="c"><header style="text-align:center;margin-bottom:2rem"><h1><span style="-webkit-text-fill-color:initial;background:none">🤖</span> AI Tools Admin</h1>
 <div class="links"><a href="{{.AppURL}}" target="_blank" class="lbtn">🌐 App URL <span class="dns-ok" id="dns-app"></span></a><a href="{{.CodeURL}}" target="_blank" class="lbtn">💻 GO CODE! <span id="dns-code"></span></a><span class="lbtn" style="cursor:default">⚙️ Admin <span id="dns-admin"></span></span></div></header>
 <div class="mt"><div class="tc"><button class="tb active" data-v="manage">MANAGE</button><button class="tb" data-v="update">UPDATE</button></div></div>
 <section id="manage-section" class="sec active"><div id="tools"><div class="card" data-t="opencode"><div class="ti"><div class="icon">🔷</div><div><div class="tn">OpenCode</div><div class="ts" id="st-opencode">Stopped</div></div></div><label class="sw"><input type="checkbox" id="tg-opencode" onchange="tog('opencode',this.checked)"><span class="sl"></span></label></div>
@@ -2749,7 +2757,7 @@ echo "    • Deno      $(${USER_HOME}/.deno/bin/deno --version 2>/dev/null | he
 echo "    • uv        $(${USER_HOME}/.local/bin/uv --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
 echo "    • opencode  $(${USER_HOME}/.opencode/bin/opencode --version 2>/dev/null || echo 'not found')"
 echo "    • nanocode  $(${USER_HOME}/.bun/bin/nanocode --version 2>/dev/null || echo 'not found')"
-echo "    • shelley   $(/usr/local/bin/shelley version 2>/dev/null | grep version | head -1 | awk -F'"' '{print $4}' || echo 'not found')"
+echo "    • shelley   $(/usr/local/bin/shelley version 2>/dev/null | grep commit | head -1 | awk -F'"' '{print substr($4,1,7)}' || echo 'not found')"
 echo ""
 echo "  ─────────────────────────────────────────────────────────────────────────────"
 echo "  AI Coding Agents:"
@@ -2906,14 +2914,19 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			v, _ := userExec("~/.bun/bin/nanocode --version 2>/dev/null || echo 'not installed'")
 			return v
 		}())
-		currentShelley := strings.TrimSpace(func() string {
-			v, _ := rootExec("/usr/local/bin/shelley version 2>/dev/null | grep '\"version\"' | cut -d'\"' -f4 || echo 'not installed'")
+		// For Shelley, we use commit hash since building from source shows "dev" as version
+		currentShelleyCommit := strings.TrimSpace(func() string {
+			v, _ := rootExec("/usr/local/bin/shelley version 2>/dev/null | grep '\"commit\"' | cut -d'\"' -f4 || echo 'not installed'")
 			return v
 		}())
 		
 		result += fmt.Sprintf("  Current opencode:  %s\n", currentOpencode)
 		result += fmt.Sprintf("  Current nanocode:  %s\n", currentNanocode)
-		result += fmt.Sprintf("  Current shelley:   %s\n", currentShelley)
+		result += fmt.Sprintf("  Current shelley:   %s\n", func() string {
+			if currentShelleyCommit == "not installed" { return "not installed" }
+			if len(currentShelleyCommit) > 7 { return currentShelleyCommit[:7] }
+			return currentShelleyCommit
+		}())
 
 		// Step 3: Check latest available versions
 		result += "\nChecking latest available versions...\n"
@@ -2948,17 +2961,20 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			}
 		}
 
-		// Get latest Shelley version from GitHub releases
-		latestShelleyOut, _ := exec.Command("bash", "-c", "curl -sI https://github.com/boldsoftware/shelley/releases/latest 2>/dev/null | grep -i '^location:' | sed 's|.*/v||' | tr -d '\\r\\n'").Output()
-		latestShelley := strings.TrimSpace(string(latestShelleyOut))
+		// Get latest Shelley commit hash from GitHub (main branch)
+		latestShelleyCommitOut, _ := exec.Command("bash", "-c", "curl -s https://api.github.com/repos/boldsoftware/shelley/commits/main | grep '\"sha\"' | head -1 | cut -d'\"' -f4").Output()
+		latestShelleyCommit := strings.TrimSpace(string(latestShelleyCommitOut))
 		
 		result += fmt.Sprintf("  Latest opencode:  %s\n", latestOpencode)
 		result += fmt.Sprintf("  Latest nanocode:  %s\n", latestNanocode)
-		result += fmt.Sprintf("  Latest shelley:   %s\n", latestShelley)
+		result += fmt.Sprintf("  Latest shelley:   %s\n", func() string {
+			if len(latestShelleyCommit) > 7 { return latestShelleyCommit[:7] }
+			return latestShelleyCommit
+		}())
 
 		opencodeNeedsUpdate := latestOpencode != "" && currentOpencode != latestOpencode && currentOpencode != "not installed"
 		nanocodeNeedsUpdate := latestNanocode != "" && currentNanocode != latestNanocode && currentNanocode != "not installed"
-		shelleyNeedsUpdate := latestShelley != "" && currentShelley != latestShelley && currentShelley != "not installed"
+		shelleyNeedsUpdate := latestShelleyCommit != "" && currentShelleyCommit != latestShelleyCommit && currentShelleyCommit != "not installed"
 		
 		var opencodeErr, nanocodeErr, shelleyErr error
 
@@ -3101,7 +3117,7 @@ echo "Verifying..."
 `
 		
 		if shelleyNeedsUpdate {
-			result += fmt.Sprintf("\nUpdating shelley (%s -> %s)...\n", currentShelley, latestShelley)
+			result += fmt.Sprintf("\nUpdating shelley (%s -> %s)...\n", func() string { if len(currentShelleyCommit) > 7 { return currentShelleyCommit[:7] }; return currentShelleyCommit }(), func() string { if len(latestShelleyCommit) > 7 { return latestShelleyCommit[:7] }; return latestShelleyCommit }())
 			result += "Building from source (this may take 1-2 minutes)...\n"
 			shelleyOut, err := rootExec(shelleyBuildScript)
 			result += shelleyOut
@@ -3109,14 +3125,15 @@ echo "Verifying..."
 				result += fmt.Sprintf("Warning: shelley update had issues: %v\n", err)
 				shelleyErr = err
 			} else {
-				verifyOut, _ := rootExec("/usr/local/bin/shelley version 2>/dev/null | grep '\"version\"' | cut -d'\"' -f4")
+				verifyOut, _ := rootExec("/usr/local/bin/shelley version 2>/dev/null | grep '\"commit\"' | cut -d'\"' -f4")
 				if v := strings.TrimSpace(verifyOut); v != "" {
+					if len(v) > 7 { v = v[:7] }
 					result += fmt.Sprintf("✅ shelley updated to %s\n", v)
 				} else {
 					result += "✅ shelley updated\n"
 				}
 			}
-		} else if currentShelley == "not installed" {
+		} else if currentShelleyCommit == "not installed" {
 			result += "\nInstalling shelley...\n"
 			result += "Building from source (this may take 1-2 minutes)...\n"
 			shelleyOut, err := rootExec(shelleyBuildScript)
@@ -3125,15 +3142,16 @@ echo "Verifying..."
 				result += fmt.Sprintf("Warning: shelley install had issues: %v\n", err)
 				shelleyErr = err
 			} else {
-				verifyOut, _ := rootExec("/usr/local/bin/shelley version 2>/dev/null | grep '\"version\"' | cut -d'\"' -f4")
+				verifyOut, _ := rootExec("/usr/local/bin/shelley version 2>/dev/null | grep '\"commit\"' | cut -d'\"' -f4")
 				if v := strings.TrimSpace(verifyOut); v != "" {
-					result += fmt.Sprintf("✅ shelley installed (version %s)\n", v)
+					if len(v) > 7 { v = v[:7] }
+					result += fmt.Sprintf("✅ shelley installed (commit %s)\n", v)
 				} else {
 					result += "✅ shelley installed\n"
 				}
 			}
 		} else {
-			result += fmt.Sprintf("\n✅ shelley is already up to date (%s)\n", currentShelley)
+			result += fmt.Sprintf("\n✅ shelley is already up to date (%s)\n", func() string { if len(currentShelleyCommit) > 7 { return currentShelleyCommit[:7] }; return currentShelleyCommit }())
 		}
 
 		if opencodeErr != nil || nanocodeErr != nil || shelleyErr != nil {
@@ -3142,7 +3160,7 @@ echo "Verifying..."
 		}
 
 		if !opencodeNeedsUpdate && !nanocodeNeedsUpdate && !shelleyNeedsUpdate && 
-		   currentOpencode != "not installed" && currentNanocode != "not installed" && currentShelley != "not installed" {
+		   currentOpencode != "not installed" && currentNanocode != "not installed" && currentShelleyCommit != "not installed" {
 			result += "\n✅ All tools are already up to date!"
 		} else {
 			result += "\n✅ Update check complete!"

@@ -36,14 +36,23 @@ Used as an AI web coding agent inside containers.
 Built from source during container creation with the following modifications:
 
   MODIFICATIONS (by vibebin project):
-  - server/system_prompt.go: Added check for SHELLEY_DOMAIN environment
-    variable to allow custom domain configuration instead of defaulting
-    to .exe.xyz suffix.
-  - server/handlers.go: Same modification as above for consistent
-    hostname/domain handling in the web UI.
+  Patches applied via Python string replacement during build:
+
+  - server/handlers.go: Modified hostname detection to check SHELLEY_DOMAIN
+    environment variable first. If set, uses that value directly. Otherwise
+    falls back to original logic (hostname + .exe.xyz suffix for short names).
+    
+    Original code checked os.Hostname() and appended .exe.xyz for names
+    without dots. New code wraps this in a conditional that first checks
+    for SHELLEY_DOMAIN env var.
+
+  - server/system_prompt.go: Similar modification for system prompts.
+    Added check for SHELLEY_DOMAIN env var before the existing IsExeDev
+    hostname logic. If SHELLEY_DOMAIN is set, uses it directly for
+    data.Hostname instead of the computed hostname.
 
 These modifications allow Shelley to display the correct App URL for
-self-hosted containers using custom domains.
+self-hosted containers using custom domains (via SHELLEY_DOMAIN env var).
 
 ================================================================================
 Incus (Linux Containers)

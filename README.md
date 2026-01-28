@@ -100,7 +100,7 @@ This project installs **opencode**, **nanocode**, and **shelley** in each contai
 
 **Note:** Before starting Shelley, add your API keys to `~/.shelley_env`. Custom models can be configured in Shelley's web UI, but doing so switches to "custom model mode" and the env var models will no longer be shown.
 
-All tools support terminal and web UI modes. Configure your LLM credentials on first run.
+All AI Coding tools support terminal/web UI modes with the exception of Shelley which only supports web UI mode.  All 3 tools support configuring LLM providers from within the webui.
 
 ## Components
 
