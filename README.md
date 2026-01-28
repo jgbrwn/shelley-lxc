@@ -96,11 +96,14 @@ This project installs **opencode**, **nanocode**, and **shelley** in each contai
 - Web-based UI only (no CLI mode)
 - Support for multiple LLM providers via environment variables (Anthropic, OpenAI, Gemini, Fireworks)
 - Custom model configuration available within the web UI
+- Ctrl/Cmd-K to start a new conversation or add custom models
 - Runs on port 9999 like the other AI tools
 
 **Note:** Before starting Shelley, add your API keys to `~/.shelley_env`. Custom models can be configured in Shelley's web UI, but doing so switches to "custom model mode" and the env var models will no longer be shown.
 
 All AI Coding tools support terminal/web UI modes with the exception of Shelley which only supports web UI mode.  All 3 tools support configuring LLM providers from within the webui.
+
+Through the webUIs on OpenCode/NanoCode, adding NanoGPT as the provider is seamless!  With Shelley, you just need to add a custom model and set it up with the same concept as shown [here](https://docs.nano-gpt.com/integrations/openhands).
 
 ## Components
 
