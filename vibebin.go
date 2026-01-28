@@ -2138,7 +2138,7 @@ echo "Node.js $(node --version) installed successfully"
 		sendProgress("✅ Claude Code installed")
 	}
 	// Add claude to PATH
-	userExec("grep -q '.claude/local' ~/.bashrc || echo 'export PATH=$PATH:$HOME/.claude/local' >> ~/.bashrc")
+	userExec("grep -q '.local/bin' ~/.bashrc || echo 'export PATH=$PATH:$HOME/.local/bin' >> ~/.bashrc")
 
 	// STEP 10b: Build and Install Shelley Web Agent from source (with domain patch)
 	sendProgress("Building Shelley Web Agent from source...")
@@ -2579,7 +2579,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	currentOpencode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.opencode/bin/opencode --version 2>/dev/null || echo 'not installed'").Output(); return out }()))
 	currentNanocode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.bun/bin/nanocode --version 2>/dev/null || echo 'not installed'").Output(); return out }()))
 	currentShelleyCommit := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"commit\"' | cut -d'\"' -f4 || echo 'not installed'").Output(); return out }()))
-	currentClaudeCode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.claude/local/claude --version 2>/dev/null | head -1 || echo 'not installed'").Output(); return out }()))
+	currentClaudeCode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.local/bin/claude --version 2>/dev/null | head -1 || echo 'not installed'").Output(); return out }()))
 	currentShelleyDisplay := currentShelleyCommit
 	if len(currentShelleyDisplay) > 7 { currentShelleyDisplay = currentShelleyDisplay[:7] }
 	send(fmt.Sprintf("  Current opencode:    %s", currentOpencode))
@@ -2641,7 +2641,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		send(fmt.Sprintf("Updating nanocode (%s -> %s)...", currentNanocode, latestNanocode))
 		// Use timeout and remove the old package first to avoid hanging
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		cmd := exec.CommandContext(ctx, "bash", "-c", "export PATH=$PATH:$HOME/.bun/bin && bun remove -g nanocode 2>/dev/null; bun add -g nanocode@latest 2>&1 | tail -3")
+		cmd := exec.CommandContext(ctx, "bash", "-c", "export PATH=$PATH:$HOME/.bun/bin && bun add -g nanocode@latest 2>&1 | tail -3")
 		out, err := cmd.CombinedOutput()
 		cancel()
 		if err != nil && strings.Contains(err.Error(), "killed") {
@@ -2674,7 +2674,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		out, _ := cmd.CombinedOutput()
 		cancel()
 		if len(strings.TrimSpace(string(out))) > 0 { send(strings.TrimSpace(string(out))) }
-		newVer, _ := exec.Command("bash", "-c", "$HOME/.claude/local/claude --version 2>/dev/null | head -1").Output()
+		newVer, _ := exec.Command("bash", "-c", "$HOME/.local/bin/claude --version 2>/dev/null | head -1").Output()
 		send(fmt.Sprintf("✅ claude-code updated to %s\n", strings.TrimSpace(string(newVer))))
 	} else if currentClaudeCode == "not installed" {
 		send("Installing claude-code...")
@@ -2898,7 +2898,7 @@ echo "    • Deno      $(${USER_HOME}/.deno/bin/deno --version 2>/dev/null | he
 echo "    • uv        $(${USER_HOME}/.local/bin/uv --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
 echo "    • opencode    $(${USER_HOME}/.opencode/bin/opencode --version 2>/dev/null || echo 'not found')"
 echo "    • nanocode    $(${USER_HOME}/.bun/bin/nanocode --version 2>/dev/null || echo 'not found')"
-echo "    • claude-code $(${USER_HOME}/.claude/local/claude --version 2>/dev/null | head -1 || echo 'not found')"
+echo "    • claude-code $(${USER_HOME}/.local/bin/claude --version 2>/dev/null | head -1 || echo 'not found')"
 echo "    • shelley     $(/usr/local/bin/shelley version 2>/dev/null | grep commit | head -1 | awk -F'"' '{print substr($4,1,7)}' || echo 'not found')"
 echo ""
 echo "  ─────────────────────────────────────────────────────────────────────────────"
@@ -3061,7 +3061,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			return v
 		}())
 		currentClaudeCode := strings.TrimSpace(func() string {
-			v, _ := userExec("~/.claude/local/claude --version 2>/dev/null | head -1 || echo 'not installed'")
+			v, _ := userExec("~/.local/bin/claude --version 2>/dev/null | head -1 || echo 'not installed'")
 			return v
 		}())
 		// For Shelley, we use commit hash since building from source shows "dev" as version
@@ -3141,7 +3141,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 		// Step 5: Update nanocode if needed
 		if nanocodeNeedsUpdate {
 			result += fmt.Sprintf("\nUpdating nanocode (%s -> %s)...\n", currentNanocode, latestNanocode)
-			nanocodeOut, err := userExec("export PATH=$PATH:$HOME/.bun/bin && bun i -g nanocode@latest && ~/.bun/bin/nanocode --version")
+			nanocodeOut, err := userExec("export PATH=$PATH:$HOME/.bun/bin && bun add -g nanocode@latest && ~/.bun/bin/nanocode --version")
 			result += nanocodeOut
 			nanocodeErr = err
 			if err != nil {
@@ -3151,7 +3151,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			}
 		} else if currentNanocode == "not installed" {
 			result += "\nInstalling nanocode...\n"
-			nanocodeOut, err := userExec("export PATH=$PATH:$HOME/.bun/bin && bun i -g nanocode@latest && ~/.bun/bin/nanocode --version")
+			nanocodeOut, err := userExec("export PATH=$PATH:$HOME/.bun/bin && bun add -g nanocode@latest && ~/.bun/bin/nanocode --version")
 			result += nanocodeOut
 			nanocodeErr = err
 			if err != nil {
@@ -3166,7 +3166,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 		// Step 6: Update Claude Code if needed
 		if claudeCodeNeedsUpdate {
 			result += fmt.Sprintf("\nUpdating claude-code (%s -> %s)...\n", currentClaudeCode, latestClaudeCode)
-			claudeOut, err := userExec("curl -fsSL https://claude.ai/install.sh | bash && ~/.claude/local/claude --version | head -1")
+			claudeOut, err := userExec("curl -fsSL https://claude.ai/install.sh | bash && ~/.local/bin/claude --version | head -1")
 			result += claudeOut
 			claudeCodeErr = err
 			if err != nil {
@@ -3176,7 +3176,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			}
 		} else if currentClaudeCode == "not installed" {
 			result += "\nInstalling claude-code...\n"
-			claudeOut, err := userExec("curl -fsSL https://claude.ai/install.sh | bash && ~/.claude/local/claude --version | head -1")
+			claudeOut, err := userExec("curl -fsSL https://claude.ai/install.sh | bash && ~/.local/bin/claude --version | head -1")
 			result += claudeOut
 			claudeCodeErr = err
 			if err != nil {
