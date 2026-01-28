@@ -2931,35 +2931,13 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 		// Step 3: Check latest available versions
 		result += "\nChecking latest available versions...\n"
 		
-		// Get latest opencode version from GitHub API (use jq for reliable parsing)
-		latestOpencodeOut, err := exec.Command("bash", "-c", "curl -s https://api.github.com/repos/anomalyco/opencode/releases/latest | jq -r '.tag_name // empty' | sed 's/^v//'").Output()
+		// Get latest opencode version from GitHub API (grep-based, no jq dependency)
+		latestOpencodeOut, _ := exec.Command("bash", "-c", "curl -s https://api.github.com/repos/anomalyco/opencode/releases/latest 2>/dev/null | grep -o '\"tag_name\": *\"[^\"]*\"' | head -1 | sed 's/\"tag_name\": *\"//' | sed 's/\"$//' | sed 's/^v//'").Output()
 		latestOpencode := strings.TrimSpace(string(latestOpencodeOut))
-		if err != nil || latestOpencode == "" {
-			// Fallback to manual parsing if jq fails
-			rawOut, _ := exec.Command("curl", "-s", "https://api.github.com/repos/anomalyco/opencode/releases/latest").Output()
-			if idx := strings.Index(string(rawOut), `"tag_name": "`); idx >= 0 {
-				start := idx + len(`"tag_name": "`)
-				end := strings.Index(string(rawOut)[start:], `"`)
-				if end > 0 {
-					latestOpencode = strings.TrimPrefix(string(rawOut)[start:start+end], "v")
-				}
-			}
-		}
 		
-		// Get latest nanocode version from GitHub API
-		latestNanocodeOut, err := exec.Command("bash", "-c", "curl -s https://api.github.com/repos/nanogpt-community/nanocode/releases/latest | jq -r '.tag_name // empty' | sed 's/^v//'").Output()
+		// Get latest nanocode version from GitHub API (grep-based, no jq dependency)
+		latestNanocodeOut, _ := exec.Command("bash", "-c", "curl -s https://api.github.com/repos/nanogpt-community/nanocode/releases/latest 2>/dev/null | grep -o '\"tag_name\": *\"[^\"]*\"' | head -1 | sed 's/\"tag_name\": *\"//' | sed 's/\"$//' | sed 's/^v//'").Output()
 		latestNanocode := strings.TrimSpace(string(latestNanocodeOut))
-		if err != nil || latestNanocode == "" {
-			// Fallback to manual parsing if jq fails
-			rawOut, _ := exec.Command("curl", "-s", "https://api.github.com/repos/nanogpt-community/nanocode/releases/latest").Output()
-			if idx := strings.Index(string(rawOut), `"tag_name": "`); idx >= 0 {
-				start := idx + len(`"tag_name": "`)
-				end := strings.Index(string(rawOut)[start:], `"`)
-				if end > 0 {
-					latestNanocode = strings.TrimPrefix(string(rawOut)[start:start+end], "v")
-				}
-			}
-		}
 
 		// Get latest Shelley commit hash from GitHub (main branch)
 		latestShelleyCommitOut, _ := exec.Command("bash", "-c", "curl -s https://api.github.com/repos/boldsoftware/shelley/commits/main | grep '\"sha\"' | head -1 | cut -d'\"' -f4").Output()
