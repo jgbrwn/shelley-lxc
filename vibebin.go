@@ -2136,9 +2136,13 @@ else
   exit 1
 fi
 mkdir -p ~/.local/bin
+# Get the version from the redirect URL before downloading
+NANOCODE_VERSION=$(curl -sIL "$NANOCODE_URL" 2>/dev/null | grep -i 'location:' | tail -1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo 'unknown')
 curl -fsSL "$NANOCODE_URL" | tar -xzf - -C ~/.local/bin
 chmod +x ~/.local/bin/nanocode
-~/.local/bin/nanocode --version
+# Store version in a file (don't run --version as it spawns worker processes)
+echo "$NANOCODE_VERSION" > ~/.local/bin/.nanocode-version
+test -x ~/.local/bin/nanocode && echo "nanocode $NANOCODE_VERSION installed"
 `
 	if err := userExec(nanocodeInstallScript); err != nil {
 		sendProgress(fmt.Sprintf("Warning: nanocode installation failed: %v", err))
@@ -2593,7 +2597,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// Step 2: Check current versions
 	send("Checking current versions...")
 	currentOpencode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.opencode/bin/opencode --version 2>/dev/null || echo 'not installed'").Output(); return out }()))
-	currentNanocode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.local/bin/nanocode --version 2>/dev/null || echo 'not installed'").Output(); return out }()))
+	currentNanocode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "cat $HOME/.local/bin/.nanocode-version 2>/dev/null || (test -x $HOME/.local/bin/nanocode && echo 'installed' || echo 'not installed')").Output(); return out }()))
 	currentShelleyCommit := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"commit\"' | cut -d'\"' -f4 || echo 'not installed'").Output(); return out }()))
 	currentClaudeCode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.local/bin/claude --version 2>/dev/null | head -1 || echo 'not installed'").Output(); return out }()))
 	currentShelleyDisplay := currentShelleyCommit
@@ -2654,11 +2658,17 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// Step 5: Update nanocode
 	send("📦 [2/4] NanoCode")
 	// Nanocode install/update script - downloads binary directly from GitHub
+	// NOTE: Don't run 'nanocode --version' as it spawns worker processes that persist
+	// Store version in .nanocode-version file instead
 	nanocodeScript := "ARCH=$(uname -m); " +
 		"if [ \"$ARCH\" = \"x86_64\" ]; then URL=\"https://github.com/nanogpt-community/nanocode/releases/latest/download/nanocode-cli-linux-x64.tar.gz\"; " +
 		"elif [ \"$ARCH\" = \"aarch64\" ]; then URL=\"https://github.com/nanogpt-community/nanocode/releases/latest/download/nanocode-cli-linux-arm64.tar.gz\"; " +
 		"else echo \"Unsupported architecture: $ARCH\"; exit 1; fi; " +
-		"mkdir -p ~/.local/bin && curl -fsSL \"$URL\" | tar -xzf - -C ~/.local/bin && chmod +x ~/.local/bin/nanocode && ~/.local/bin/nanocode --version"
+		"mkdir -p ~/.local/bin && " +
+		"NANOCODE_VERSION=$(curl -sIL \"$URL\" 2>/dev/null | grep -i 'location:' | tail -1 | grep -oE 'v[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || echo 'unknown') && " +
+		"curl -fsSL \"$URL\" | tar -xzf - -C ~/.local/bin && chmod +x ~/.local/bin/nanocode && " +
+		"echo \"$NANOCODE_VERSION\" > ~/.local/bin/.nanocode-version && " +
+		"test -x ~/.local/bin/nanocode && echo \"nanocode $NANOCODE_VERSION installed\""
 	if nanocodeNeedsUpdate {
 		send(fmt.Sprintf("Updating nanocode (%s -> %s)...", currentNanocode, latestNanocode))
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -2917,7 +2927,7 @@ echo "    • Bun       $(${USER_HOME}/.bun/bin/bun --version 2>/dev/null || ech
 echo "    • Deno      $(${USER_HOME}/.deno/bin/deno --version 2>/dev/null | head -1 | awk '{print $2}' || echo 'not found')"
 echo "    • uv        $(${USER_HOME}/.local/bin/uv --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
 echo "    • opencode    $(${USER_HOME}/.opencode/bin/opencode --version 2>/dev/null || echo 'not found')"
-echo "    • nanocode    $(${USER_HOME}/.local/bin/nanocode --version 2>/dev/null || echo 'not found')"
+echo "    • nanocode    $(cat ${USER_HOME}/.local/bin/.nanocode-version 2>/dev/null || (test -x ${USER_HOME}/.local/bin/nanocode && echo 'installed' || echo 'not found'))"
 echo "    • claude-code $(${USER_HOME}/.local/bin/claude --version 2>/dev/null | head -1 || echo 'not found')"
 echo "    • shelley     $(/usr/local/bin/shelley version 2>/dev/null | grep commit | head -1 | awk -F'"' '{print substr($4,1,7)}' || echo 'not found')"
 echo ""
@@ -3076,8 +3086,9 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			v, _ := userExec("~/.opencode/bin/opencode --version 2>/dev/null || echo 'not installed'")
 			return v
 		}())
+		// Read version from file instead of running nanocode --version (which spawns workers)
 		currentNanocode := strings.TrimSpace(func() string {
-			v, _ := userExec("~/.local/bin/nanocode --version 2>/dev/null || echo 'not installed'")
+			v, _ := userExec("cat ~/.local/bin/.nanocode-version 2>/dev/null || (test -x ~/.local/bin/nanocode && echo 'installed' || echo 'not installed')")
 			return v
 		}())
 		currentClaudeCode := strings.TrimSpace(func() string {
@@ -3159,6 +3170,8 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 		}
 
 		// Step 5: Update nanocode if needed (download binary directly from GitHub)
+		// NOTE: Don't run 'nanocode --version' as it spawns worker processes that persist
+		// Store version in .nanocode-version file instead
 		nanocodeScript := `
 ARCH=$(uname -m)
 if [ "$ARCH" = "x86_64" ]; then
@@ -3170,9 +3183,13 @@ else
   exit 1
 fi
 mkdir -p ~/.local/bin
+# Get version from redirect URL before downloading
+NANOCODE_VERSION=$(curl -sIL "$URL" 2>/dev/null | grep -i 'location:' | tail -1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo 'unknown')
 curl -fsSL "$URL" | tar -xzf - -C ~/.local/bin
 chmod +x ~/.local/bin/nanocode
-~/.local/bin/nanocode --version
+# Store version in file (don't run --version as it spawns worker processes)
+echo "$NANOCODE_VERSION" > ~/.local/bin/.nanocode-version
+test -x ~/.local/bin/nanocode && echo "nanocode $NANOCODE_VERSION installed"
 `
 		if nanocodeNeedsUpdate {
 			result += fmt.Sprintf("\nUpdating nanocode (%s -> %s)...\n", currentNanocode, latestNanocode)
