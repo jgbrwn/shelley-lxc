@@ -55,6 +55,16 @@ These modifications allow Shelley to display the correct App URL for
 self-hosted containers using custom domains (via SHELLEY_DOMAIN env var).
 
 ================================================================================
+Claude Code
+================================================================================
+Copyright © 2024-present Anthropic, PBC
+Licensed under the Apache License, Version 2.0
+Source: https://github.com/anthropics/claude-code
+
+Used as an AI CLI coding agent inside containers.
+Installed via official installer script during container creation.
+
+================================================================================
 Incus (Linux Containers)
 ================================================================================
 Copyright © 2023-present Linux Containers project

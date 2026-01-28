@@ -35,7 +35,7 @@ This project provides the infrastructure to self-host your own AI coding environ
 
 Each container is a fully persistent Linux sandbox running **Ubuntu 24.04 LTS (Noble)** or **Debian 13 (Trixie)**, with:
 
-- **[opencode](https://github.com/anomalyco/opencode)**, **[nanocode](https://github.com/nanogpt-community/nanocode)**, and **[Shelley](https://github.com/boldsoftware/shelley)** - AI coding agents with terminal and web UI interfaces
+- **[opencode](https://github.com/anomalyco/opencode)**, **[nanocode](https://github.com/nanogpt-community/nanocode)**, **[Claude Code](https://github.com/anthropics/claude-code)**, and **[Shelley](https://github.com/boldsoftware/shelley)** - AI coding agents with terminal and web UI interfaces
 - **AI coding web UI** accessible via HTTPS at `code.yourdomain.com` (Basic Auth protected)
 - **AI Tools Admin** web app at `admin.code.yourdomain.com` for managing AI coding tools
 - **Your app/site** accessible via HTTPS at `yourdomain.com`
@@ -63,10 +63,11 @@ Each container is a fully persistent Linux sandbox running **Ubuntu 24.04 LTS (N
 | **opencode** | Open source AI coding agent with terminal and web UI |
 | **nanocode** | NanoGPT-powered AI coding agent (fork of opencode) |
 | **shelley** | AI coding web agent from Bold Software |
+| **claude-code** | Anthropic's CLI coding agent |
 
 ### AI Coding Agents
 
-This project installs **opencode**, **nanocode**, and **shelley** in each container:
+This project installs **opencode**, **nanocode**, **claude-code**, and **shelley** in each container:
 
 #### opencode
 
@@ -90,6 +91,16 @@ This project installs **opencode**, **nanocode**, and **shelley** in each contai
 
 > *Disclosure: The NanoGPT link is an affiliate link.*
 
+#### claude-code
+
+[Claude Code](https://github.com/anthropics/claude-code) is Anthropic's official CLI coding agent:
+- CLI only (no web UI)
+- Requires Anthropic API key (`ANTHROPIC_API_KEY` environment variable)
+- Supports Claude models with agentic coding capabilities
+- Run with `claude` command in terminal
+
+**Note:** Claude Code is CLI-only and is not managed via the admin.code web UI. Use it directly in the terminal.
+
 #### shelley
 
 [Shelley](https://github.com/boldsoftware/shelley) is a powerful AI web agent from Bold Software:
@@ -101,7 +112,7 @@ This project installs **opencode**, **nanocode**, and **shelley** in each contai
 
 **Note:** Before starting Shelley, add your API keys to `~/.shelley_env`. Custom models can be configured in Shelley's web UI, but doing so switches to "custom model mode" and the env var models will no longer be shown.
 
-All AI Coding tools support terminal/web UI modes with the exception of Shelley which only supports web UI mode.  All 3 tools support configuring LLM providers from within the webui.
+All AI Coding tools support terminal/web UI modes with the exception of Shelley (web UI only) and Claude Code (CLI only). OpenCode, NanoCode, and Shelley support configuring LLM providers from within their web UIs.
 
 Through the webUIs on OpenCode/NanoCode, adding NanoGPT as the provider is seamless!  With Shelley, you just need to add a custom model and set it up with the same concept as shown [here](https://docs.nano-gpt.com/integrations/openhands).
 
