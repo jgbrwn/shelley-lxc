@@ -2122,9 +2122,25 @@ echo "Node.js $(node --version) installed successfully"
 	// Add opencode to PATH
 	userExec("grep -q '.opencode/bin' ~/.bashrc || echo 'export PATH=$PATH:$HOME/.opencode/bin' >> ~/.bashrc")
 
-	// STEP 10: Install nanocode (requires bun to be in PATH)
+	// STEP 10: Install nanocode (download binary directly from GitHub releases)
 	sendProgress("Installing nanocode...")
-	if err := userExec("export PATH=$PATH:$HOME/.bun/bin && bun add -g nanocode@latest"); err != nil {
+	nanocodeInstallScript := `
+set -e
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+  NANOCODE_URL="https://github.com/nanogpt-community/nanocode/releases/latest/download/nanocode-cli-linux-x64.tar.gz"
+elif [ "$ARCH" = "aarch64" ]; then
+  NANOCODE_URL="https://github.com/nanogpt-community/nanocode/releases/latest/download/nanocode-cli-linux-arm64.tar.gz"
+else
+  echo "Unsupported architecture: $ARCH"
+  exit 1
+fi
+mkdir -p ~/.local/bin
+curl -fsSL "$NANOCODE_URL" | tar -xzf - -C ~/.local/bin
+chmod +x ~/.local/bin/nanocode
+~/.local/bin/nanocode --version
+`
+	if err := userExec(nanocodeInstallScript); err != nil {
 		sendProgress(fmt.Sprintf("Warning: nanocode installation failed: %v", err))
 	} else {
 		sendProgress("✅ nanocode installed")
@@ -2500,7 +2516,7 @@ func startTool(tool string) error {
 	proj := filepath.Join(state.homeDir, ProjectsDir)
 	switch tool {
 	case "opencode": cmd = exec.Command("bash", "-c", fmt.Sprintf("cd %s && %s/.opencode/bin/opencode serve --port %d --hostname 0.0.0.0", proj, state.homeDir, WebUIPort))
-	case "nanocode": cmd = exec.Command("bash", "-c", fmt.Sprintf("cd %s && %s/.bun/bin/nanocode serve --port %d --hostname 0.0.0.0", proj, state.homeDir, WebUIPort))
+	case "nanocode": cmd = exec.Command("bash", "-c", fmt.Sprintf("cd %s && %s/.local/bin/nanocode serve --port %d --hostname 0.0.0.0", proj, state.homeDir, WebUIPort))
 	case "shelley":
 		cmd = exec.Command("bash", "-c", fmt.Sprintf("cd %s && /usr/local/bin/start-shelley.sh", proj))
 		fmt.Fprintf(logFile, "Note: Shelley requires API keys in ~/.shelley_env\n")
@@ -2577,7 +2593,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// Step 2: Check current versions
 	send("Checking current versions...")
 	currentOpencode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.opencode/bin/opencode --version 2>/dev/null || echo 'not installed'").Output(); return out }()))
-	currentNanocode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.bun/bin/nanocode --version 2>/dev/null || echo 'not installed'").Output(); return out }()))
+	currentNanocode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.local/bin/nanocode --version 2>/dev/null || echo 'not installed'").Output(); return out }()))
 	currentShelleyCommit := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "/usr/local/bin/shelley version 2>/dev/null | grep '\"commit\"' | cut -d'\"' -f4 || echo 'not installed'").Output(); return out }()))
 	currentClaudeCode := strings.TrimSpace(string(func() []byte { out, _ := exec.Command("bash", "-c", "$HOME/.local/bin/claude --version 2>/dev/null | head -1 || echo 'not installed'").Output(); return out }()))
 	currentShelleyDisplay := currentShelleyCommit
@@ -2637,24 +2653,28 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	
 	// Step 5: Update nanocode
 	send("📦 [2/4] NanoCode")
+	// Nanocode install/update script - downloads binary directly from GitHub
+	nanocodeScript := "ARCH=$(uname -m); " +
+		"if [ \"$ARCH\" = \"x86_64\" ]; then URL=\"https://github.com/nanogpt-community/nanocode/releases/latest/download/nanocode-cli-linux-x64.tar.gz\"; " +
+		"elif [ \"$ARCH\" = \"aarch64\" ]; then URL=\"https://github.com/nanogpt-community/nanocode/releases/latest/download/nanocode-cli-linux-arm64.tar.gz\"; " +
+		"else echo \"Unsupported architecture: $ARCH\"; exit 1; fi; " +
+		"mkdir -p ~/.local/bin && curl -fsSL \"$URL\" | tar -xzf - -C ~/.local/bin && chmod +x ~/.local/bin/nanocode && ~/.local/bin/nanocode --version"
 	if nanocodeNeedsUpdate {
 		send(fmt.Sprintf("Updating nanocode (%s -> %s)...", currentNanocode, latestNanocode))
-		// Use timeout and remove the old package first to avoid hanging
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		cmd := exec.CommandContext(ctx, "bash", "-c", "export PATH=$PATH:$HOME/.bun/bin && bun add -g nanocode@latest 2>&1 | tail -3")
+		cmd := exec.CommandContext(ctx, "bash", "-c", nanocodeScript)
 		out, err := cmd.CombinedOutput()
 		cancel()
 		if err != nil && strings.Contains(err.Error(), "killed") {
 			send("⚠️ nanocode update timed out")
 		} else {
 			if len(strings.TrimSpace(string(out))) > 0 { send(strings.TrimSpace(string(out))) }
-			newVer, _ := exec.Command("bash", "-c", "$HOME/.bun/bin/nanocode --version 2>/dev/null").Output()
-			send(fmt.Sprintf("✅ nanocode updated to %s\n", strings.TrimSpace(string(newVer))))
+			send("✅ nanocode updated\n")
 		}
 	} else if currentNanocode == "not installed" {
 		send("Installing nanocode...")
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		cmd := exec.CommandContext(ctx, "bash", "-c", "export PATH=$PATH:$HOME/.bun/bin && bun add -g nanocode@latest 2>&1 | tail -3")
+		cmd := exec.CommandContext(ctx, "bash", "-c", nanocodeScript)
 		out, _ := cmd.CombinedOutput()
 		cancel()
 		if len(strings.TrimSpace(string(out))) > 0 { send(strings.TrimSpace(string(out))) }
@@ -2897,7 +2917,7 @@ echo "    • Bun       $(${USER_HOME}/.bun/bin/bun --version 2>/dev/null || ech
 echo "    • Deno      $(${USER_HOME}/.deno/bin/deno --version 2>/dev/null | head -1 | awk '{print $2}' || echo 'not found')"
 echo "    • uv        $(${USER_HOME}/.local/bin/uv --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
 echo "    • opencode    $(${USER_HOME}/.opencode/bin/opencode --version 2>/dev/null || echo 'not found')"
-echo "    • nanocode    $(${USER_HOME}/.bun/bin/nanocode --version 2>/dev/null || echo 'not found')"
+echo "    • nanocode    $(${USER_HOME}/.local/bin/nanocode --version 2>/dev/null || echo 'not found')"
 echo "    • claude-code $(${USER_HOME}/.local/bin/claude --version 2>/dev/null | head -1 || echo 'not found')"
 echo "    • shelley     $(/usr/local/bin/shelley version 2>/dev/null | grep commit | head -1 | awk -F'"' '{print substr($4,1,7)}' || echo 'not found')"
 echo ""
@@ -3057,7 +3077,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			return v
 		}())
 		currentNanocode := strings.TrimSpace(func() string {
-			v, _ := userExec("~/.bun/bin/nanocode --version 2>/dev/null || echo 'not installed'")
+			v, _ := userExec("~/.local/bin/nanocode --version 2>/dev/null || echo 'not installed'")
 			return v
 		}())
 		currentClaudeCode := strings.TrimSpace(func() string {
@@ -3138,10 +3158,25 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			result += fmt.Sprintf("\n✅ opencode is already up to date (%s)\n", currentOpencode)
 		}
 
-		// Step 5: Update nanocode if needed
+		// Step 5: Update nanocode if needed (download binary directly from GitHub)
+		nanocodeScript := `
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+  URL="https://github.com/nanogpt-community/nanocode/releases/latest/download/nanocode-cli-linux-x64.tar.gz"
+elif [ "$ARCH" = "aarch64" ]; then
+  URL="https://github.com/nanogpt-community/nanocode/releases/latest/download/nanocode-cli-linux-arm64.tar.gz"
+else
+  echo "Unsupported architecture: $ARCH"
+  exit 1
+fi
+mkdir -p ~/.local/bin
+curl -fsSL "$URL" | tar -xzf - -C ~/.local/bin
+chmod +x ~/.local/bin/nanocode
+~/.local/bin/nanocode --version
+`
 		if nanocodeNeedsUpdate {
 			result += fmt.Sprintf("\nUpdating nanocode (%s -> %s)...\n", currentNanocode, latestNanocode)
-			nanocodeOut, err := userExec("export PATH=$PATH:$HOME/.bun/bin && bun add -g nanocode@latest && ~/.bun/bin/nanocode --version")
+			nanocodeOut, err := userExec(nanocodeScript)
 			result += nanocodeOut
 			nanocodeErr = err
 			if err != nil {
@@ -3151,7 +3186,7 @@ func updateToolsCmd(containerName, containerUser string) tea.Cmd {
 			}
 		} else if currentNanocode == "not installed" {
 			result += "\nInstalling nanocode...\n"
-			nanocodeOut, err := userExec("export PATH=$PATH:$HOME/.bun/bin && bun add -g nanocode@latest && ~/.bun/bin/nanocode --version")
+			nanocodeOut, err := userExec(nanocodeScript)
 			result += nanocodeOut
 			nanocodeErr = err
 			if err != nil {
