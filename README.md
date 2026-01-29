@@ -150,15 +150,44 @@ Any KVM-based VPS will work well with vibebin. Here are some recommended options
 
 > *Disclosure: The HostBRR and Netcup links above are affiliate links.*
 
-### Security Recommendations
+## Security Setup (Before Installation)
 
-Before installing, ensure your host SSH is properly secured:
+Complete these security steps **before** installing vibebin.
+
+### SSH Hardening
+
+Ensure your host SSH is properly secured in `/etc/ssh/sshd_config`:
 
 ```bash
-# In /etc/ssh/sshd_config, verify these settings:
 PermitRootLogin no
 PasswordAuthentication no
 ```
+
+Restart SSH after changes: `sudo systemctl restart sshd`
+
+### UFW Firewall (If Enabled)
+
+If you're using UFW firewall, allow the required ports and Incus bridge traffic:
+
+```bash
+# Allow required ports
+sudo ufw allow 80,443,22,2222/tcp
+
+# Allow Incus bridge traffic (required for container networking)
+sudo ufw allow in on incusbr0
+sudo ufw route allow in on incusbr0
+sudo ufw route allow out on incusbr0
+```
+
+> **Note:** The `incusbr0` rules are needed after Incus is installed. You can add them after the first vibebin run if UFW blocks container traffic.
+
+### Fail2ban (Optional)
+
+For additional protection against brute-force attacks, you can configure fail2ban for Caddy and SSHPiper. See [docs/fail2ban.md](docs/fail2ban.md) for detailed setup instructions.
+
+> **Note:** Install fail2ban **after** the initial vibebin run so that Caddy and SSHPiper are already in place.
+
+### General Security
 
 All administrative tasks should be performed as a regular user with `sudo` privileges, not as root directly.
 
@@ -293,15 +322,6 @@ sudo systemctl enable --now sshpiperd
 ```
 
 SSHPiper listens on **port 2222** for container SSH access. Host SSH remains on port 22.
-
-### Verify Security Settings
-
-Ensure your host SSH is properly secured in `/etc/ssh/sshd_config`:
-
-```bash
-PermitRootLogin no
-PasswordAuthentication no
-```
 
 ## Usage
 
