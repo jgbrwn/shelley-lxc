@@ -19,11 +19,14 @@ import (
 )
 
 const (
-	CaddyConfDir = "/etc/caddy/conf.d"
-	SSHPiperRoot = "/var/lib/sshpiper"
-	DBPath       = "/var/lib/vibebin/containers.db"
-	CodeUIPort   = 9999 // opencode/nanocode web UI port
-	AdminPort    = 8099 // AI tools admin app port
+	CaddyConfDir       = "/etc/caddy/conf.d"
+	SSHPiperRoot       = "/var/lib/sshpiper"
+	DBPath             = "/var/lib/vibebin/containers.db"
+	CodeUIPort         = 9999 // opencode/nanocode web UI port
+	AdminPort          = 8099 // AI tools admin app port
+	CaddyAPI           = "http://localhost:2019"
+	CaddyAccessLogPath = "/var/log/caddy/access.log"
+	RouteCheckInterval = 15 * time.Second
 )
 
 type lifecycleEvent struct {
@@ -73,12 +76,18 @@ func main() {
 	fmt.Println("Restoring container states...")
 	restoreContainerStates(db)
 
+	// Ensure Caddy logging is configured
+	ensureCaddyLogging()
+
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start monitoring in background
 	go monitorIncusEvents(db)
+
+	// Start periodic route checker in background
+	go monitorCaddyRoutes(db)
 
 	// Wait for shutdown signal
 	<-sigChan
@@ -221,11 +230,11 @@ func syncContainerConfig(name, domain string, appPort int, authUser, authHash st
 
 func updateCaddyRoutes(name, domain, ip string, appPort int, authUser, authHash string) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	caddyAPI := "http://localhost:2019"
 
 	// Delete existing routes
-	deleteCaddyRoute(client, caddyAPI, name+"-app")
-	deleteCaddyRoute(client, caddyAPI, name+"-code")
+	deleteCaddyRoute(client, CaddyAPI, name+"-app")
+	deleteCaddyRoute(client, CaddyAPI, name+"-code")
+	deleteCaddyRoute(client, CaddyAPI, name+"-admin")
 
 	// Add app route
 	appRoute := map[string]interface{}{
@@ -236,7 +245,7 @@ func updateCaddyRoutes(name, domain, ip string, appPort int, authUser, authHash 
 			"upstreams": []map[string]string{{"dial": fmt.Sprintf("%s:%d", ip, appPort)}},
 		}},
 	}
-	addCaddyRoute(client, caddyAPI, appRoute)
+	addCaddyRoute(client, CaddyAPI, appRoute)
 
 	// Build code UI route handlers (for opencode/nanocode web UI)
 	var codeHandlers []map[string]interface{}
@@ -265,7 +274,7 @@ func updateCaddyRoutes(name, domain, ip string, appPort int, authUser, authHash 
 		"match": []map[string]interface{}{{"host": []string{"code." + domain}}},
 		"handle": codeHandlers,
 	}
-	addCaddyRoute(client, caddyAPI, codeRoute)
+	addCaddyRoute(client, CaddyAPI, codeRoute)
 
 	// Build admin app route handlers (same auth as code UI)
 	var adminHandlers []map[string]interface{}
@@ -295,12 +304,12 @@ func updateCaddyRoutes(name, domain, ip string, appPort int, authUser, authHash 
 		"match": []map[string]interface{}{{"host": []string{"admin.code." + domain}}},
 		"handle": adminHandlers,
 	}
-	addCaddyRoute(client, caddyAPI, adminRoute)
+	addCaddyRoute(client, CaddyAPI, adminRoute)
 }
 
 func addCaddyRoute(client *http.Client, caddyAPI string, route map[string]interface{}) {
 	body, _ := json.Marshal(route)
-	req, _ := http.NewRequest("POST", caddyAPI+"/config/apps/http/servers/srv0/routes", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", CaddyAPI+"/config/apps/http/servers/srv0/routes", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -311,7 +320,7 @@ func addCaddyRoute(client *http.Client, caddyAPI string, route map[string]interf
 }
 
 func deleteCaddyRoute(client *http.Client, caddyAPI, routeID string) {
-	req, _ := http.NewRequest("DELETE", caddyAPI+"/id/"+routeID, nil)
+	req, _ := http.NewRequest("DELETE", CaddyAPI+"/id/"+routeID, nil)
 	resp, err := client.Do(req)
 	if err != nil {
 		return
@@ -321,9 +330,9 @@ func deleteCaddyRoute(client *http.Client, caddyAPI, routeID string) {
 
 func removeCaddyRoutes(name string) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	caddyAPI := "http://localhost:2019"
-	deleteCaddyRoute(client, caddyAPI, name+"-app")
-	deleteCaddyRoute(client, caddyAPI, name+"-code")
+	deleteCaddyRoute(client, CaddyAPI, name+"-app")
+	deleteCaddyRoute(client, CaddyAPI, name+"-code")
+	deleteCaddyRoute(client, CaddyAPI, name+"-admin")
 }
 
 func getContainerStatus(name string) (status, ip string) {
@@ -359,4 +368,142 @@ func getContainerStatus(name string) (status, ip string) {
 		}
 	}
 	return status, ip
+}
+
+// ensureCaddyLogging configures server-level access logging via Caddy API
+// This applies to all routes on srv0, including dynamically added ones
+func ensureCaddyLogging() {
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// Ensure log directory exists
+	os.MkdirAll(filepath.Dir(CaddyAccessLogPath), 0755)
+
+	// Check if logging is already configured
+	resp, err := client.Get(CaddyAPI + "/config/logging/logs/access")
+	if err == nil {
+		resp.Body.Close()
+		if resp.StatusCode == 200 {
+			// Already configured, check if srv0 logs are set
+			resp2, err := client.Get(CaddyAPI + "/config/apps/http/servers/srv0/logs")
+			if err == nil {
+				resp2.Body.Close()
+				if resp2.StatusCode == 200 {
+					return // Already fully configured
+				}
+			}
+		}
+	}
+
+	fmt.Println("Configuring Caddy access logging...")
+
+	// Create the access log sink
+	logConfig := map[string]interface{}{
+		"writer": map[string]interface{}{
+			"output":   "file",
+			"filename": CaddyAccessLogPath,
+		},
+		"encoder": map[string]interface{}{
+			"format": "json",
+		},
+	}
+	body, _ := json.Marshal(logConfig)
+	req, _ := http.NewRequest("PUT", CaddyAPI+"/config/logging/logs/access", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to configure Caddy log sink: %v\n", err)
+		return
+	}
+	resp.Body.Close()
+
+	// Configure srv0 to use the access log
+	srv0Logs := map[string]interface{}{
+		"default_logger_name": "access",
+	}
+	body, _ = json.Marshal(srv0Logs)
+	req, _ = http.NewRequest("PUT", CaddyAPI+"/config/apps/http/servers/srv0/logs", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to configure srv0 logging: %v\n", err)
+		return
+	}
+	resp.Body.Close()
+
+	fmt.Println("Caddy access logging configured")
+}
+
+// monitorCaddyRoutes periodically checks if Caddy routes are present and repairs if missing
+func monitorCaddyRoutes(db *sql.DB) {
+	ticker := time.NewTicker(RouteCheckInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		checkAndRepairRoutes(db)
+	}
+}
+
+// checkAndRepairRoutes verifies all expected routes exist in Caddy and repairs if missing
+func checkAndRepairRoutes(db *sql.DB) {
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// Get current routes from Caddy
+	resp, err := client.Get(CaddyAPI + "/config/apps/http/servers/srv0/routes")
+	if err != nil {
+		// Caddy might not be running, skip this check
+		return
+	}
+	defer resp.Body.Close()
+
+	var routes []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&routes); err != nil {
+		return
+	}
+
+	// Build set of existing route IDs
+	existingRoutes := make(map[string]bool)
+	for _, route := range routes {
+		if id, ok := route["@id"].(string); ok {
+			existingRoutes[id] = true
+		}
+	}
+
+	// Get all running containers from database and incus
+	rows, err := db.Query("SELECT name, domain, app_port, auth_user, auth_hash FROM containers")
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	repaired := false
+	for rows.Next() {
+		var name, domain string
+		var appPort int
+		var authUser, authHash sql.NullString
+		if err := rows.Scan(&name, &domain, &appPort, &authUser, &authHash); err != nil {
+			continue
+		}
+
+		// Check if container is running
+		status, ip := getContainerStatus(name)
+		if status != "running" || ip == "" {
+			continue
+		}
+
+		// Check if all three routes exist for this container
+		appRouteID := name + "-app"
+		codeRouteID := name + "-code"
+		adminRouteID := name + "-admin"
+
+		if !existingRoutes[appRouteID] || !existingRoutes[codeRouteID] || !existingRoutes[adminRouteID] {
+			fmt.Printf("Missing routes detected for %s, repairing...\n", name)
+			syncContainerConfig(name, domain, appPort, authUser.String, authHash.String)
+			repaired = true
+		}
+	}
+
+	// If we repaired routes, also ensure logging is configured
+	if repaired {
+		ensureCaddyLogging()
+	}
 }
