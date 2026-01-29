@@ -105,10 +105,12 @@ sudo systemctl restart fail2ban
 sudo fail2ban-client status
 
 # Check specific jail status
-sudo fail2ban-client status caddy-flood
-sudo fail2ban-client status sshpiperd
+sudo fail2ban-client status sshd          # Host SSH (default jail)
+sudo fail2ban-client status caddy-flood   # Caddy flood protection
+sudo fail2ban-client status sshpiperd     # SSHPiper protection
 
 # View banned IPs
+sudo fail2ban-client get sshd banned
 sudo fail2ban-client get caddy-flood banned
 sudo fail2ban-client get sshpiperd banned
 ```

@@ -196,7 +196,7 @@ sudo ufw route allow out on incusbr0
 
 ### Fail2ban (Optional)
 
-For additional protection against brute-force attacks, you can configure fail2ban for Caddy and SSHPiper. See [docs/fail2ban.md](docs/fail2ban.md) for detailed setup instructions.
+For additional protection against brute-force attacks, you can install fail2ban. By default, fail2ban protects the host SSH daemon (sshd). The [docs/fail2ban.md](docs/fail2ban.md) guide extends this with Caddy and SSHPiper protection.
 
 > **Note:** Install fail2ban **after** the initial vibebin run so that Caddy and SSHPiper are already in place.
 
