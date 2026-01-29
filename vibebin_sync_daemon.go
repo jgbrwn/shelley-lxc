@@ -460,11 +460,15 @@ func checkAndRepairRoutes(db *sql.DB) {
 		return
 	}
 
-	// Build set of existing route IDs
+	// Build set of existing route IDs and track indices of routes without @id (Caddyfile defaults)
 	existingRoutes := make(map[string]bool)
-	for _, route := range routes {
+	var defaultRouteIndices []int
+	for i, route := range routes {
 		if id, ok := route["@id"].(string); ok {
 			existingRoutes[id] = true
+		} else {
+			// Route without @id is a Caddyfile default route
+			defaultRouteIndices = append(defaultRouteIndices, i)
 		}
 	}
 
@@ -500,6 +504,21 @@ func checkAndRepairRoutes(db *sql.DB) {
 			syncContainerConfig(name, domain, appPort, authUser.String, authHash.String)
 			repaired = true
 		}
+	}
+
+	// Remove Caddyfile default routes (routes without @id) if we have vibebin routes
+	// Delete in reverse order to avoid index shifting issues
+	if len(defaultRouteIndices) > 0 && len(existingRoutes) > 0 {
+		fmt.Printf("Removing %d Caddyfile default route(s)...\n", len(defaultRouteIndices))
+		for i := len(defaultRouteIndices) - 1; i >= 0; i-- {
+			idx := defaultRouteIndices[i]
+			req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/config/apps/http/servers/srv0/routes/%d", CaddyAPI, idx), nil)
+			resp, err := client.Do(req)
+			if err == nil {
+				resp.Body.Close()
+			}
+		}
+		repaired = true
 	}
 
 	// If we repaired routes, also ensure logging is configured
