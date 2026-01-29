@@ -49,8 +49,11 @@ ignoreregex =
 # Note: Some ban times are intentionally aggressive
 
 [DEFAULT]
-# Ignore localhost, IPv6 localhost, and Incus container networks
 ignoreip = 127.0.0.1/8 ::1 10.128.31.0/24 fd42:ace5:c1f4:81db::/64
+
+# If not using UFW firewall then comment this out
+banaction = ufw
+banaction_allports = ufw
 
 [caddy-flood]
 enabled = true
@@ -58,15 +61,17 @@ port = http,https
 filter = caddy-flood
 logpath = /var/log/caddy/access.log
 
-# Use UFW as the banning action
-banaction = ufw
+# 25 requests (maxretry) within 30 seconds (findtime) triggers the ban
+findtime = 30s
+maxretry = 25
 
-# 10 requests within 20 seconds triggers ban
-findtime = 20s
-maxretry = 10
+# Ban duration (12 hrs)
+bantime = 12h
 
-# Ban duration: 30 days
-bantime = 30d
+# Incremental banning (doubles ban time on repeat offenses)
+bantime.increment = true
+bantime.factor    = 2
+bantime.maxtime   = 52w
 
 [sshpiperd]
 enabled  = true
@@ -76,10 +81,6 @@ backend  = systemd
 maxretry = 3
 findtime = 10m
 bantime  = 12h
-
-# Use UFW instead of raw iptables
-banaction = ufw
-banaction_allports = ufw
 
 # Incremental banning (doubles ban time on repeat offenses)
 bantime.increment = true
