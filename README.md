@@ -165,21 +165,34 @@ PasswordAuthentication no
 
 Restart SSH after changes: `sudo systemctl restart sshd`
 
-### UFW Firewall (If Enabled)
+### UFW Firewall (Optional)
 
-If you're using UFW firewall, allow the required ports and Incus bridge traffic:
+If you want to use UFW firewall, install and configure it with the required rules:
 
 ```bash
-# Allow required ports
-sudo ufw allow 80,443,22,2222/tcp
+# Install UFW
+sudo apt update && sudo apt install -y ufw
 
-# Allow Incus bridge traffic (required for container networking)
+# Allow required ports (SSH must be allowed before enabling!)
+sudo ufw allow 22/tcp      # Host SSH
+sudo ufw allow 80/tcp      # HTTP (Caddy)
+sudo ufw allow 443/tcp     # HTTPS (Caddy)
+sudo ufw allow 2222/tcp    # SSHPiper (container SSH)
+
+# Enable UFW
+sudo ufw enable
+```
+
+After the first vibebin run (which installs Incus), add the bridge rules for container networking:
+
+```bash
+# Allow Incus bridge traffic (run after vibebin installs Incus)
 sudo ufw allow in on incusbr0
 sudo ufw route allow in on incusbr0
 sudo ufw route allow out on incusbr0
 ```
 
-> **Note:** The `incusbr0` rules are needed after Incus is installed. You can add them after the first vibebin run if UFW blocks container traffic.
+> **Note:** UFW is enabled at boot automatically after `ufw enable`. Verify status with `sudo ufw status verbose`.
 
 ### Fail2ban (Optional)
 
