@@ -1821,7 +1821,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y \
 	sudo curl wget git make screen openssh-server unzip jq \
-	dnsutils software-properties-common sosreport gnupg dirmngr \
+	dnsutils whois software-properties-common sosreport gnupg dirmngr \
 	ripgrep sqlite3 neovim lsof python3-pip python-is-python3 python3-dns \
 	tree net-tools file build-essential pipx psmisc bsdmainutils socat rsync \
 	binutils dctrl-tools debootstrap lintian quilt devscripts diffstat dpkg-dev \

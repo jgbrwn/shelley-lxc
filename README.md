@@ -114,7 +114,7 @@ This project installs **opencode**, **nanocode**, **claude-code**, and **shelley
 
 All AI Coding tools support terminal/web UI modes with the exception of Shelley (web UI only) and Claude Code (CLI only). OpenCode, NanoCode, and Shelley support configuring LLM providers from within their web UIs.
 
-Through the webUIs on OpenCode/NanoCode, adding NanoGPT as the provider is seamless!  With Shelley, you just need to add a custom model and set it up with the same concept as shown [here](https://docs.nano-gpt.com/integrations/openhands).
+Through the webUIs on OpenCode/NanoCode, adding NanoGPT as the provider is seamless!  With Shelley, you just need to add a custom model and set it up with the same concept as shown [here](https://docs.nano-gpt.com/integrations/openhands). See the NanoGPT [integrations](https://docs.nano-gpt.com/integrations/claude-code) page for setting up NanoGPT with various coding agents.
 
 ## Components
 
